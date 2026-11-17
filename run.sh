@@ -6,6 +6,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ] || ! .venv/bin/python -c "import numpy, scipy, starlette, uvicorn, matplotlib" 2>/dev/null; then
-  ./install.sh
+  bash ./install.sh
 fi
 exec .venv/bin/python -m app.main "$@"
