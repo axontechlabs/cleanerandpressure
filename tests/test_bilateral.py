@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from core import synthetic as S
-from core.bilateral import G, SIDES, BilateralError
+from core.bilateral import (G, SIDES, BilateralError, arch_drop_for_length, stance_width_from_height)
 from core.bilateral_session import BilateralSession
 from core.mesh_cleaning import clean
 from core.mesh_io import load_stl_bytes, stl_bytes
@@ -123,6 +123,28 @@ def test_all_five_toes_touch_and_carry_load(lifted_session):
     assert not [w for w in r["warnings"] if "dedo" in w or "hallux" in w]
 
 
+def test_heel_joins_forefoot_through_lateral_band(lifted_session):
+    """Huella estática: el talón se une al antepié por la banda lateral del mediopié, no por el arco."""
+    r = lifted_session.simulate({"mass": 70.0})
+    arr = lifted_session.result["_arrays"]
+    for x in SIDES:
+        f = r["feet"][x]
+        assert f["footprint_continuous"]
+        assert f["midfoot_band_min_width_mm"] > 3.0
+        assert f["lateral_column_drop_mm"] == pytest.approx(0.35 * f["arch_drop_mm"], rel=1e-6)
+        ff, p = arr["fields"][x], arr["pressure"][x]
+        L = f["length_mm"]
+        sn = ff.local[..., 1] / L
+        xm = ff.local[..., 0] * lifted_session.feet[x].medial_sign
+        band = ff.mask & (sn > 0.25) & (sn < 0.5)
+        mid = (p > 2.0) & band
+        medial_half = xm > np.median(xm[band])
+        assert (mid & medial_half).sum() < 0.3 * mid.sum()          # el contacto del mediopié es lateral
+    # sin descenso de las columnas, el talón queda separado
+    r0 = lifted_session.simulate({"mass": 70.0, "arch_drop": 0.0})
+    assert not all(r0["feet"][x]["footprint_continuous"] for x in SIDES)
+
+
 def test_tissue_compression_matches_literature(lifted_session):
     """Compresión del tejido en bipedestación dentro de lo medido (almohadilla del talón ~47 %)."""
     r = lifted_session.simulate({"mass": 70.0})
@@ -177,9 +199,46 @@ def test_arch_drop_and_loaded_scan(session):
     with_drop = session.simulate({"mass": 70.0})
     loaded = session.simulate({"mass": 70.0, "loaded_scan": True})
     for x in SIDES:
-        assert with_drop["feet"][x]["arch_drop_mm"] == pytest.approx(6.0, rel=1e-6)
+        L = with_drop["feet"][x]["length_mm"]
+        assert with_drop["feet"][x]["arch_drop_mm"] == pytest.approx(arch_drop_for_length(L), rel=1e-6)
         assert loaded["feet"][x]["arch_drop_mm"] == 0.0
         assert with_drop["feet"][x]["midfoot_pct"] >= loaded["feet"][x]["midfoot_pct"] - 1e-6
+
+
+def test_arch_drop_scales_with_foot_length_and_user_value():
+    # Nielsen et al. (2009): la caída del navicular crece 0,31–0,40 mm por cm de longitud del pie
+    assert arch_drop_for_length(253.0) == pytest.approx(8.0)
+    assert arch_drop_for_length(223.0) == pytest.approx(8.0 - 0.35 * 3.0)
+    assert arch_drop_for_length(283.0) > arch_drop_for_length(253.0)
+
+
+def test_arch_is_measured_from_the_scan(session):
+    """El arco del pie derecho sintético (22 mm) es más alto que el del izquierdo (16 mm)."""
+    r = session.simulate({"mass": 70.0, "arch_drop": 7.0})
+    a = {x: r["feet"][x]["arch"] for x in SIDES}
+    for x in SIDES:
+        assert a[x]["measured"]
+        assert 0.28 <= a[x]["apex_frac"] <= 0.52
+        assert r["feet"][x]["arch_drop_mm"] == pytest.approx(7.0, rel=1e-6)
+        assert r["feet"][x]["arch_drop_source"] == "indicado por el usuario"
+        assert r["feet"][x]["footprint_type"]
+    assert a["derecho"]["height_mm"] > a["izquierdo"]["height_mm"] + 3.0
+
+
+def test_height_sets_stance_width_and_checks_scale(session):
+    assert stance_width_from_height(169) == pytest.approx(170.0)
+    assert stance_width_from_height(185) == pytest.approx(170.0 + 3.3 * 16)
+    rep = session.place({"height_cm": 185})
+    assert rep["stance"]["heel_separation_mm"] == pytest.approx(stance_width_from_height(185))
+    assert rep["stance"]["heel_separation_source"] == "estimada por la estatura"
+    assert not rep["stance"]["warnings"]                       # pies sintéticos de ~245 mm: 13 % de 185 cm
+    rep = session.place({"height_cm": 185, "heel_separation": 200})
+    assert rep["stance"]["heel_separation_mm"] == pytest.approx(200.0)
+    rep = session.place({"height_cm": 120})                    # 245 mm serían el 20 % de la estatura
+    assert any("estatura" in w for w in rep["stance"]["warnings"])
+    r = session.simulate({"mass": 70.0, "height_cm": 120})
+    assert any("estatura" in w for w in r["warnings"])
+    session.place({})
 
 
 def test_moment_equilibrium_of_each_foot(session):

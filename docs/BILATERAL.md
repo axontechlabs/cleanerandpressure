@@ -10,8 +10,8 @@ pie). La aplicación de un pie no cambia; este modo es una función añadida con
    de la aplicación de un pie (segmentación, contorno, suavizado, sólido y validación). Resultado:
    dos STL limpios e independientes, que se descargan en el marco de su archivo original. Si alguno
    no supera la validación, no se exporta y no se puede simular.
-3. **Persona.** Peso corporal (kg) y reparto izquierdo/derecho (50/50 por defecto), o bien la
-   proyección del centro de masas si se conoce.
+3. **Persona.** Peso corporal (kg), estatura (cm, opcional) y reparto izquierdo/derecho (50/50
+   por defecto), o bien la proyección del centro de masas si se conoce.
 4. **Postura.** *Colocar pies y ver en 3D* coloca ambos pies en el suelo común.
 5. **Simulación.** *Simular bipedestación bilateral* resuelve la carga de los dos pies a la vez y
    muestra el mapa bilateral, los mapas individuales, el 3D coloreado y el informe.
@@ -40,11 +40,28 @@ alabeo de cada pie (ver más abajo).
 
 **Postura y separación.** Por defecto se usa la postura media preferida en bipedestación tranquila
 medida por McIlroy y Maki (1997) en 262 personas: **17 cm entre centros de talón y 14° entre los
-ejes largos de los pies** (7° de apertura por pie). El propio estudio muestra una gran variabilidad
-entre personas, así que separación, apertura de cada pie y avance de uno respecto al otro son
-ajustables. La posición natural de una persona concreta no se puede deducir de dos escaneos
-independientes: no contienen la relación entre los pies. Si con los valores indicados las huellas se
-solapan o quedan a menos de 8 mm, la separación se aumenta automáticamente y se avisa.
+ejes largos de los pies** (7° de apertura por pie). La separación preferida aumenta con la estatura
+(r = 0,56 en adultos de 1,69 ± 0,08 m, con 17,7 ± 4,7 cm de separación). Si se indica la estatura,
+la separación se estima con la recta de regresión que dan esos datos:
+
+    separación (mm) = 170 + 3,3 · (estatura (cm) − 169)
+
+Queda limitada a 10–28 cm. La correlación es moderada: es una estimación mejor que la media, no la
+postura de la persona. Separación, apertura de cada pie y avance de uno respecto al otro siguen
+siendo ajustables, y una separación escrita a mano tiene prioridad. La posición natural de una
+persona concreta no se puede deducir de dos escaneos independientes, porque no contienen la
+relación entre los pies. Si con los valores indicados las huellas se solapan o quedan a menos de
+8 mm, la separación se aumenta automáticamente y se avisa.
+
+**Qué cambia con la estatura.** En el modo *reparto I/D indicado*, cada pie se equilibra con su
+propia línea de carga, así que la separación no cambia el mapa de cada pie. Solo mueve el centro de
+presiones global. Donde sí cuenta es en el modo *centro de masas*, porque reparte el peso entre los
+pies según la posición del centro de masas respecto a ellos.
+
+**Comprobación de escala.** La estatura también sirve para comprobar que la escala del escaneo es
+coherente. Sin carga, el pie mide el 14,6–15,1 % de la estatura (Xiong et al., 2009) y suele quedar
+entre el 14 y el 16 %. Si un pie queda fuera del 13–17,5 %, se avisa: lo más probable es que el
+escaneo esté en otras unidades o que la estatura sea errónea.
 
 Las transformaciones de colocación se aplican solo a la copia usada en la simulación; los STL
 limpios no cambian (lo comprueba una prueba automática).
@@ -83,11 +100,56 @@ El pie se modela con varios segmentos y se carga en este orden, como ocurre al p
      articulaciones interfalángicas y el pulpejo blando hacen que se aplaste contra el suelo, y el
      pulpejo no se comprime más del 59 % (más allá, el dedo se flexionaría). Si por eso un grupo no
      alcanza el 90 % de su momento, se avisa.
-3. **Arco interno.** El arco longitudinal interno desciende con la carga. La caída del navicular
-   en adultos sanos es de unos 3,6–8,1 mm de media; por defecto se usan 6 mm con medio peso por pie,
-   proporcional a la carga. El descenso es máximo bajo el navicular y nulo en la columna lateral
-   (mucho más rígida). Solo cierra la holgura hasta el suelo: el esqueleto no empuja el tejido por sí
-   mismo. Si el escaneo se tomó de pie, marque *Escaneo tomado en carga* y no se aplica.
+3. **Arco interno.** Se mide en el escaneo sin carga, con el pie apoyado en su plano:
+   - **Altura del arco:** la del borde medial de la planta (tercio medial de la anchura) en su punto
+     más alto del mediopié, en mm y en % de la longitud del pie.
+   - **Ápice:** dónde está ese punto (bajo el navicular), en % de la longitud desde el centro del
+     talón.
+   - **Holgura lateral:** la altura mínima del borde lateral del mediopié (cuboides, base del 5.º
+     metatarsiano). Si es de pocos mm, ese borde apoya enseguida y el mediopié carga más. Es el caso
+     típico de un pie normal con banda lateral de apoyo.
+
+   **Descenso del arco con la carga.** Lo que importa es cuánto baja el arco desde la postura del
+   escaneo, sin carga, hasta la bipedestación. Del pie sin carga (sentado) a de pie, la altura
+   dorsal a mitad del pie baja de media unos 10 mm (McPoil et al., 2008). Parte de ese valor es
+   compresión del tejido plantar, que el modelo calcula aparte, así que el descenso óseo de
+   referencia es de 8 mm para un pie de 25,3 cm. Crece con la longitud del pie, 0,31–0,40 mm por cm
+   (Nielsen et al., 2009); se usan 0,35 mm por cm. La caída del navicular clásica (3,6–8,1 mm) se
+   mide desde la posición neutra subastragalina, no desde el pie relajado sin carga, y por eso es
+   algo menor. Se aplica con medio peso por pie y es proporcional a la carga. Si se ha medido el
+   descenso de la persona, se escribe y tiene prioridad.
+
+   **Forma del descenso medial.** Sigue el arco medido: es nulo en el apoyo del talón, máximo en el
+   ápice y nulo en la 1.ª cabeza metatarsiana. Antes el máximo se colocaba en una posición fija
+   (45 %); en los escaneos reales probados el ápice estaba hacia el 34–36 %. El descenso solo
+   cierra la holgura hasta el suelo: el esqueleto no empuja el tejido por sí mismo. Si el escaneo se
+   tomó de pie, se marca *Escaneo tomado en carga* y no se aplica.
+
+   **Columna lateral y banda de apoyo del mediopié.** La columna lateral (calcáneo, cuboides y 5.º
+   metatarsiano) también desciende con la carga, aunque menos que la medial. En TC en carga, la
+   distancia cuboides-suelo baja 5,3 mm cuando la navicular-suelo baja unos 15 mm, es decir,
+   ≈ 0,35 veces. El modelo la hace descender 0,35 veces el descenso medial, del apoyo del talón a la
+   5.ª cabeza metatarsiana, con el máximo bajo el punto más alto del borde lateral medido en el
+   escaneo.
+
+   Así se forma la banda lateral de apoyo del mediopié. En una huella estática normal (índice del
+   arco de 0,21–0,26), esa banda une el talón con el antepié; el arco medial no apoya. Solo en pies
+   cavos la huella queda cortada.
+
+   El informe indica si el talón queda unido al antepié y la anchura mínima de la banda. En los
+   escaneos reales probados, sin el descenso lateral la huella quedaba cortada; con él, los dos pies
+   la tienen continua, con índice del arco de 0,20–0,23. Antes el modelo trataba la columna lateral
+   como rígida.
+
+   **Lo que la altura del arco no dice.** No dice cuánto baja el arco. Los pies cavos suelen ser
+   rígidos y los planos, flexibles (Zifchock et al., 2017), pero la relación no es lo bastante
+   estrecha para deducir el descenso de la altura. Por eso la altura se mide y se usa para la
+   forma y la posición del descenso, y su magnitud viene de la longitud del pie o de la medida de
+   la persona.
+
+   **Tipo de huella.** Con la huella simulada se calcula el índice del arco de Cavanagh y Rodgers.
+   Se clasifica como arco alto (≤ 0,21), normal (0,21–0,26) o bajo (≥ 0,26).
+
 4. **Tejido blando y equilibrio.** El suelo comprime el tejido plantar de cada región según una ley
    exponencial con acoplamiento lateral:
 
@@ -145,8 +207,11 @@ cada pie. El error de equilibrio aparece en el informe (en las pruebas, menor qu
 cabeceo, alabeo y giro de los dedos. Tiene también cuatro ecuaciones: su fuerza, los dos momentos
 que sitúan su centro de presiones bajo la **línea de carga** de la pierna y el equilibrio de
 momentos de los dedos alrededor de las articulaciones MTF. El problema está determinado. Por defecto la línea
-de carga cae al 32 % de la longitud del pie desde el talón, en la línea media de la huella, porque
-en bipedestación tranquila el centro de presiones queda justo por delante de los tobillos. Con el
+de carga cae al 32 % de la longitud del pie medido desde el centro del talón (≈ 38–39 % desde su
+borde posterior), en la línea media de la huella, porque en bipedestación tranquila el centro de
+presiones queda justo por delante de los tobillos. Medido desde el borde posterior del talón, en
+reposo cae entre el 31 y el 58 % de la longitud del pie según la persona, con el 44,5 % de media
+con los pies separados. El informe da las dos medidas. Con el
 reparto de Cavanagh (talón 60 %, mediopié 8 %, antepié 28 %, dedos 4 %) el centro de presiones
 cae hacia el 33–35 %. Es ajustable.
 
@@ -203,6 +268,7 @@ cada pie (+) y el global (○). Vista superior: pie izquierdo a la izquierda, de
 .venv/bin/python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 -o resultados/
 .venv/bin/python cli_bilateral.py izq.stl der.stl --peso 82 --reparto-izquierdo 45 -o salida/
 .venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 --centro-masas 15 38 -o salida/
+.venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 --estatura 165 --caida-navicular 7 -o salida/
 ```
 
 ## Pruebas (`tests/test_bilateral.py`)
@@ -225,7 +291,14 @@ su propia orientación aleatoria. Se comprueba:
 - con dedos muy levantados (30°): que siguen apoyando los cinco y se avisa; y que, si el giro
   máximo permitido no basta, no apoyan y se avisa;
 - el reparto de referencia: talón 50–72 %, mediopié < 15 %, antepié 20–40 %, pico en el talón;
-- el descenso del arco y su desactivación para escaneos en carga;
+- el descenso del arco y su desactivación para escaneos en carga; que el descenso por defecto
+  sigue la longitud del pie y que un valor indicado tiene prioridad;
+- que el arco se mide en el escaneo (el derecho sintético, más alto, mide más) y su ápice cae en
+  una posición anatómica;
+- que, con dedos en extensión y pulpejos, el talón se une al antepié por la banda lateral del
+  mediopié (el contacto del mediopié es lateral) y que sin descenso de las columnas queda separado;
+- que la estatura fija la separación (salvo que se indique otra) y que una estatura incoherente con
+  la longitud de los pies da un aviso;
 - rangos fisiológicos (pico entre 50 y 250 kPa, contacto entre 60 y 180 cm² por pie, retropié por
   encima del 30 %);
 - que pies distintos dan mapas distintos y que las regiones suman la fuerza del pie;
@@ -254,10 +327,12 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
 - **Sin validar frente a mediciones.** Ninguna presión simulada se ha comparado con una plataforma.
   Los módulos del tejido son un valor de partida; para usar las cifras absolutas haría falta
   calibrarlos con al menos una medida baropodométrica de la misma persona.
-- **Arco simplificado.** El descenso del arco es un valor fijo (6 mm con medio peso) con una forma
-  típica, no se calcula a partir de la rigidez de cada pie. Un pie muy flexible o muy rígido necesita
-  ajustarlo; se puede medir con la prueba de caída del navicular. Si el escaneo se hizo en carga,
-  hay que desactivarlo.
+- **Arco.** La forma y la posición del descenso salen del escaneo, pero su magnitud es la típica
+  para la longitud del pie, no la rigidez de ese pie. La columna lateral desciende en una
+  proporción fija (0,35) del descenso medial, tomada de pies planos flexibles. Un pie muy flexible o muy rígido necesita la
+  medida de la caída del navicular. Si el escaneo se hizo en carga, hay que desactivarlo.
+- **Estatura.** Solo estima la separación entre los pies (correlación moderada) y comprueba la
+  escala. No cambia el mapa de cada pie en el modo de reparto indicado.
 - **Dedos.** Los cinco dedos se separan por proporciones anatómicas ajustadas a los huecos
   interdigitales visibles, no por segmentación de cada falange. El momento flexor (700 N·mm) está
   calibrado para dar la carga ligera publicada, no medido en la persona. Las articulaciones
@@ -287,8 +362,32 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
 - J. C. Teoh, B. Lim, T. Lee. *Effect of deformation depth on plantar soft tissue behavior*. J. Foot
   Ankle Res. 7 (Suppl. 1) A84 (2014): umbral no lineal del 12 % (talón) y el 16 % (2.ª cabeza
   metatarsiana).
-- R. G. Nielsen et al. *Determination of normal values for navicular drop during walking*. J. Foot
-  Ankle Res. (2009): caída del navicular de 3,6–8,1 mm de media en adultos sanos.
+- R. G. Nielsen et al. *Determination of normal values for navicular drop during walking: a new
+  model correcting for foot length and gender*. J. Foot Ankle Res. 2 (2009) 12: caída del navicular
+  de 3,6–8,1 mm de media en adultos sanos; +0,40 mm (hombres) y +0,31 mm (mujeres) por cm de
+  longitud del pie.
+- *Influence of stance width on standing balance in healthy older adults*. J. Neurol. 269 (2022)
+  6228–6236, <https://doi.org/10.1007/s00415-022-11144-5>: separación preferida 17,7 ± 4,7 cm,
+  correlación con la estatura r = 0,56.
+- S. Xiong et al. *Foot deformations under different load-bearing conditions and their
+  relationships to stature and body weight*. Anthropol. Sci. 117 (2009) 77–88: longitud del pie del
+  14,6–15,1 % de la estatura.
+- T. G. McPoil et al. *Arch height change during sit-to-stand: an alternative for the navicular
+  drop test*. J. Foot Ankle Res. 1 (2008) 3: la altura dorsal a mitad del pie baja unos 10 mm de
+  media de sentado (sin carga) a de pie.
+- *Flexible adult acquired flatfoot deformity: comparison between weight-bearing and
+  non-weight-bearing measurements using cone-beam computed tomography*. J. Bone Joint Surg. Am. 99
+  (2017) e98: distancia cuboides-suelo de 22 a 17 mm y navicular-suelo de 38 a 23 mm, sin carga
+  frente a en carga.
+- P. R. Cavanagh, M. M. Rodgers (1987), arriba: índice del arco con huella estática a medio peso;
+  arco alto ≤ 0,21, normal 0,21–0,26, bajo ≥ 0,26.
+- R. A. Zifchock et al. *The relationship between arch height and arch flexibility*. J. Am. Podiatr.
+  Med. Assoc. 107 (2017) 119–123: los pies cavos tienden a ser rígidos y los planos flexibles.
+- *Relationship between quiet standing position and perceptibility of standing position in the
+  anteroposterior direction*. J. Physiol. Anthropol. 29 (2010) 197: centro de presiones en reposo
+  entre el 31 y el 58 % de la longitud del pie desde el talón.
+- *Relationship between feet position and anterior-posterior center of pressure location*. J. Phys.
+  Ther. Sci. 25 (2013): 44,5 ± 5,5 % de la longitud del pie con los pies separados.
 - Grosor de la almohadilla plantar bajo las cabezas metatarsianas, valores de referencia ecográficos:
   Healthcare 13 (2025) 3219, <https://doi.org/10.3390/healthcare13243219>.
 - Grosor de la almohadilla del talón, en pacientes con fascitis plantar y en pies sin dolor: Acta

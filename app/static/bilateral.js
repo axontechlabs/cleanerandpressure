@@ -64,10 +64,11 @@ function buildTissueTable() {
 }
 
 const num = (id) => parseFloat($(id).value);
+const opt = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
 
 function stanceParams() {
   return {
-    heel_separation: num('#heel_separation'), toe_out_left: num('#toe_out_left'), toe_out_right: num('#toe_out_right'),
+    heel_separation: opt('#heel_separation'), height_cm: opt('#height_cm'), toe_out_left: num('#toe_out_left'), toe_out_right: num('#toe_out_right'),
     advance_right: num('#advance_right'), load_point: num('#load_point') / 100,
   };
 }
@@ -82,7 +83,7 @@ function simParams() {
     mass: num('#mass'), mode: $('#mode').value, split_left: num('#split'),
     com_x: num('#com_x'), com_y_frac: num('#com_y') / 100, load_point: num('#load_point') / 100,
     nonlinearity_scale: num('#nonlinearity_scale'), spread: num('#spread'), contact_threshold: num('#contact_threshold'),
-    arch_drop: num('#arch_drop'), loaded_scan: $('#loaded_scan').checked,
+    arch_drop: opt('#arch_drop'), height_cm: opt('#height_cm'), loaded_scan: $('#loaded_scan').checked,
     toe_flexor: num('#toe_flexor'), toe_max_flexion: num('#toe_max_flexion'),
     stiffness_scale: { izquierdo: num('#stiff-izquierdo'), derecho: num('#stiff-derecho') }, tissue,
   };
@@ -144,7 +145,8 @@ function renderPlacement(pl) {
   if (!pl || !pl.feet) return '';
   let h = '<h3>Disposición bilateral</h3>';
   const st = pl.stance;
-  h += rows([['Separación entre talones', fmt(st.heel_separation_mm, 0) + ' mm'],
+  h += rows([['Separación entre talones', fmt(st.heel_separation_mm, 0) + ' mm'
+      + (st.heel_separation_source ? ` <small>(${st.heel_separation_source})</small>` : '')],
     ['Ángulo entre los ejes de los pies', fmt(st.angle_between_feet_deg, 1) + '°'],
     ...SIDES.map((s) => [`Pie ${s}: lado detectado`, `${pl.feet[s].detected_side} (confianza ${pl.feet[s].side_confidence})`]),
     ...SIDES.map((s) => [`Pie ${s}: longitud / anchura`, `${fmt(pl.feet[s].length_mm, 0)} / ${fmt(pl.feet[s].width_mm, 0)} mm`])]);
@@ -182,12 +184,17 @@ function renderReport() {
       ['Presión media', fmt(f.mean_kPa, 1) + ' kPa'],
       ['Presión máxima', fmt(f.peak_kPa, 1) + ' kPa'],
       ['Centro de presiones (x, y)', `${fmt(f.cop_world_mm[0], 1)}, ${fmt(f.cop_world_mm[1], 1)} mm`],
-      ['CoP desde el talón', fmt(f.cop_from_heel_pct, 1) + ' % de la longitud'],
+      ['CoP desde el talón', `${fmt(f.cop_from_heel_edge_pct, 1)} % de la longitud desde el borde posterior (${fmt(f.cop_from_heel_pct, 1)} % desde el centro del talón)`],
       ['Talón / mediopié / antepié / dedos', `${fmt(f.rearfoot_pct, 1)} / ${fmt(f.midfoot_pct, 1)} / ${fmt(f.forefoot_pct, 1)} / ${fmt(f.toes_pct, 1)} %`],
       ['Apoyo inicial (asentamiento por gravedad)', (f.initial_support_regions || []).join(', ') || '—'],
       ['Dedos que apoyan', `${f.toes_in_contact ?? '—'} de ${(f.toes || []).length || 5} · ${fmt(f.toe_contact_area_cm2, 1)} cm²`],
       ['Dedos: giro medio de asentamiento', fmt(f.toe_rest_deg, 1) + '°'],
-      ['Descenso del arco interno aplicado', fmt(f.arch_drop_mm, 1) + ' mm'],
+      f.arch && f.arch.measured && ['Arco interno sin carga (escaneo)', `${fmt(f.arch.height_mm, 1)} mm (${fmt(f.arch.height_pct, 1)} % de la longitud) · ápice al ${fmt(100 * f.arch.apex_frac, 0)} %`],
+      f.arch && f.arch.measured && ['Holgura del borde lateral del mediopié', fmt(f.arch.lateral_clearance_mm, 1) + ' mm'],
+      ['Descenso del arco interno aplicado', fmt(f.arch_drop_mm, 1) + ' mm' + (f.arch_drop_source ? ` <small>(${f.arch_drop_source})</small>` : '')],
+      ['Descenso de la columna lateral', fmt(f.lateral_column_drop_mm, 1) + ' mm'],
+      ['Tipo de huella simulada', f.footprint_type || '—'],
+      ['Talón unido al antepié (banda lateral)', f.footprint_continuous ? `sí · banda de ${fmt(f.midfoot_band_min_width_mm, 0)} mm en su punto más estrecho` : 'no (huella cortada en el mediopié)'],
       ['Índice del arco (Cavanagh)', fmt(f.arch_index, 2)],
       ['Compresión máx. del tejido', `${fmt(f.max_compression_mm, 1)} mm (${fmt(f.max_tissue_strain_pct, 0)} %)`],
       ['Giro del pie para el equilibrio', `cabeceo ${fmt(f.pitch_deg, 1)}°, alabeo ${fmt(f.roll_deg, 1)}°`],
