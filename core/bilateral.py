@@ -128,9 +128,13 @@ def stance_width_from_height(height_cm: float) -> float:
     return float(np.clip(w, 100.0, 280.0))
 
 
-# Caída del navicular: 6 mm de media en bipedestación; aumenta con la longitud del pie
-# (0,31–0,40 mm por cm; Nielsen et al., 2009, con 25,3 cm de longitud media).
-ARCH_DROP_REF = 6.0                 # mm
+# Descenso del arco desde el escaneo sin carga hasta la bipedestación. Del pie sin carga (sentado) a
+# de pie con medio peso, la altura dorsal a mitad del pie baja unos 10 mm de media (McPoil et al.,
+# 2008); parte es compresión del tejido plantar, que el modelo calcula aparte, así que el descenso
+# óseo de referencia es de 8 mm para un pie de 25,3 cm. (La caída del navicular clásica, 3,6–8,1 mm,
+# se mide desde la posición neutra subastragalina, no desde el pie relajado sin carga.) Aumenta con
+# la longitud del pie: 0,31–0,40 mm por cm (Nielsen et al., 2009).
+ARCH_DROP_REF = 8.0                 # mm
 ARCH_DROP_PER_CM = 0.35             # mm por cm de longitud del pie
 ARCH_DROP_REF_LENGTH = 25.3         # cm
 
@@ -748,6 +752,9 @@ def _regions(local: np.ndarray, mask: np.ndarray, L: float, medial_sign: float, 
 
 
 ARCH_HALF_SPAN = 0.25           # fracción de la longitud por detrás del ápice con descenso del arco
+# Descenso de la columna lateral respecto al del arco medial: en TC en carga la distancia
+# cuboides-suelo baja 5,3 mm cuando la navicular-suelo baja 15 mm (≈ 0,35).
+LATERAL_COLUMN_RATIO = 0.35
 
 
 def measure_arch(sn: np.ndarray, tml: np.ndarray, h: np.ndarray, sel: np.ndarray, L: float) -> dict:
@@ -774,15 +781,18 @@ def measure_arch(sn: np.ndarray, tml: np.ndarray, h: np.ndarray, sel: np.ndarray
         prof_l.append(float(np.min(h[q])))
     if len(centers) < 4:
         return {"apex_frac": 0.40, "height_mm": None, "height_pct": None, "lateral_clearance_mm": None,
-                "measured": False}
+                "lateral_apex_frac": 0.33, "lateral_height_mm": None, "measured": False}
     c, pm, pl = np.array(centers), np.array(prof_m), np.array(prof_l)
     win = (c >= 0.22) & (c <= 0.58)
     i = int(np.flatnonzero(win)[np.argmax(pm[win])]) if win.any() else int(np.argmax(pm))
     apex = float(np.clip(c[i], 0.28, 0.52))
     mid = (c >= 0.35) & (c <= 0.58)
     lat_clear = float(np.median(pl[mid])) if mid.any() else float(np.median(pl))
+    wl = (c >= 0.18) & (c <= 0.50)
+    j = int(np.flatnonzero(wl)[np.argmax(pl[wl])]) if wl.any() else int(np.argmax(pl))
     return {"apex_frac": apex, "height_mm": float(pm[i]), "height_pct": float(100.0 * pm[i] / L),
-            "lateral_clearance_mm": lat_clear, "measured": True,
+            "lateral_clearance_mm": lat_clear, "lateral_apex_frac": float(np.clip(c[j], 0.20, 0.50)),
+            "lateral_height_mm": float(pl[j]), "measured": True,
             "profile": {"frac": c.round(3).tolist(), "medial_mm": pm.round(2).tolist(),
                         "lateral_min_mm": pl.round(2).tolist()}}
 
@@ -831,7 +841,22 @@ def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict,
     bx = np.where(np.abs(d) < 1.0, np.cos(0.5 * np.pi * d) ** 2, 0.0)
     arch["front_frac"], arch["back_frac"] = front, back
     med = np.clip((0.6 - tml) / 0.5, 0.0, 1.0)
-    arch_shape = np.where(mask & (toes.cell_toe < 0), bx * med * med * (3 - 2 * med), 0.0)
+    medial_shape = bx * med * med * (3 - 2 * med)
+    # Columna lateral (calcáneo-cuboides-5.º MTT): también desciende con la carga, pero menos que la
+    # medial (≈ 0,35 veces: distancia cuboides-suelo frente a navicular-suelo en TC en carga). Va
+    # del apoyo del talón a la 5.ª cabeza metatarsiana, con el máximo bajo el punto más alto del
+    # borde lateral medido en el escaneo. Es la que forma la banda lateral de apoyo del mediopié que,
+    # en una huella estática normal, une el talón con el antepié.
+    la = arch["lateral_apex_frac"]
+    lback = max(0.06, la - 0.22)
+    lfront = (float(toes.axis_y[4]) / foot.length - 0.03) if toes.active and toes.present[4] else 0.60
+    lfront = float(np.clip(lfront, la + 0.12, 0.72))
+    dl = np.where(sn < la, (sn - la) / (la - lback), (sn - la) / (lfront - la))
+    bl = np.where(np.abs(dl) < 1.0, np.cos(0.5 * np.pi * dl) ** 2, 0.0)
+    latw = np.clip((tml - 0.35) / 0.5, 0.0, 1.0)
+    lateral_shape = LATERAL_COLUMN_RATIO * bl * latw * latw * (3 - 2 * latw)
+    arch["lateral_front_frac"], arch["lateral_back_frac"] = lfront, lback
+    arch_shape = np.where(mask & (toes.cell_toe < 0), np.maximum(medial_shape, lateral_shape), 0.0)
     mtp_line = float(np.mean(toes.axis_y[toes.present])) / foot.length if toes.active else 0.73
     toe_line = mtp_line + MTP_TO_SULCUS if toes.active else 0.80
     return FootField(foot.declared_side, mask, h, np.maximum(th, 1.0), e0, reg, local, toe_line,
@@ -1216,6 +1241,8 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         "toes_pct": float(sum(r["pct_foot"] for r in regions if r["key"] in ("hallux", "dedos"))),
         "midfoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"] == "mediopie")),
         "arch_drop_mm": float(sol["arch_drop"]),
+        "lateral_column_drop_mm": float(sol["arch_drop"] * LATERAL_COLUMN_RATIO),
+        **_footprint_continuity(ff, contact, sn, grid.res, foot.length),
         "arch_drop_source": sol.get("arch_drop_source", ""),
         "arch": {k: v for k, v in ff.arch.items()},
         "footprint_type": _footprint_type(arch_index),
@@ -1227,6 +1254,19 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         "rearfoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"].startswith("talon"))),
         "forefoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"] in ("met1", "met23", "met45"))),
     }
+
+
+def _footprint_continuity(ff: FootField, contact: np.ndarray, sn: np.ndarray, res: float, L: float) -> dict:
+    """¿Une la huella (sin dedos) el talón con el antepié? Y anchura mínima de la banda del mediopié."""
+    sole = contact & ~ff.toe_mask
+    lab, _ = ndimage.label(sole, structure=np.ones((3, 3)))
+    heel = sole & (sn < 0.12)
+    fore = sole & (sn > 0.55) & (sn < ff.mtp_line)
+    joined = bool((set(np.unique(lab[heel])) - {0}) & (set(np.unique(lab[fore])) - {0}))
+    step = 0.025
+    wmm = [float((sole & (sn >= a) & (sn < a + step)).sum() * res * res / (step * L))
+           for a in np.arange(0.15, 0.55, step)]
+    return {"footprint_continuous": joined, "midfoot_band_min_width_mm": min(wmm) if wmm else 0.0}
 
 
 def _footprint_type(ai: float) -> str:
