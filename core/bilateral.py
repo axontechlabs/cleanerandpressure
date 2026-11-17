@@ -83,13 +83,14 @@ DEFAULT_TISSUE = {
 class StanceParams:
     """Colocación de los pies en el suelo (vista superior: X a la derecha, Y hacia delante)."""
 
-    heel_separation: float = 170.0      # mm entre centros de talón (McIlroy y Maki, 1997)
+    heel_separation: float | None = None  # mm entre centros de talón; None = automática (estatura o media)
     toe_out_left: float = 7.0           # grados de apertura del pie izquierdo (14° entre ejes)
     toe_out_right: float = 7.0
     advance_right: float = 0.0          # mm que el pie derecho está por delante del izquierdo
     load_point: float = 0.32            # posición AP de la carga para apoyar el pie (fracción desde el talón)
     min_gap: float = 8.0                # mm de separación mínima entre huellas
     swap: bool = False                  # intercambiar los escaneos izquierdo y derecho
+    height_cm: float = 0.0              # estatura (cm); 0 = desconocida
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "StanceParams":
@@ -97,8 +98,45 @@ class StanceParams:
         out = cls()
         for k in cls.__dataclass_fields__:
             if k in d and d[k] is not None:
-                setattr(out, k, type(getattr(out, k))(d[k]))
+                if k == "swap":
+                    out.swap = bool(d[k])
+                else:
+                    setattr(out, k, float(d[k]))
+        if out.heel_separation is not None and not out.heel_separation > 0:
+            out.heel_separation = None
         return out
+
+    def resolved_separation(self) -> tuple[float, str]:
+        """Separación entre centros de talón (mm) y de dónde sale."""
+        if self.heel_separation is not None:
+            return float(self.heel_separation), "indicada por el usuario"
+        if self.height_cm and self.height_cm > 0:
+            return stance_width_from_height(self.height_cm), "estimada por la estatura"
+        return STANCE_WIDTH_MEAN, "media de la población (McIlroy y Maki, 1997)"
+
+
+# Postura preferida: 17 cm entre centros de talón de media (McIlroy y Maki, 1997). La separación
+# preferida se correlaciona con la estatura (r = 0,56; DE 4,7 cm de separación y 8 cm de estatura en
+# adultos de 1,69 m de media): pendiente de regresión 0,56 · 4,7 / 8 ≈ 0,33 cm por cm de estatura.
+STANCE_WIDTH_MEAN = 170.0           # mm
+STANCE_WIDTH_SLOPE = 0.33           # mm por mm de estatura (= cm por cm)
+STANCE_REF_HEIGHT = 169.0           # cm
+
+
+def stance_width_from_height(height_cm: float) -> float:
+    w = STANCE_WIDTH_MEAN + 10.0 * STANCE_WIDTH_SLOPE * (float(height_cm) - STANCE_REF_HEIGHT)
+    return float(np.clip(w, 100.0, 280.0))
+
+
+# Caída del navicular: 6 mm de media en bipedestación; aumenta con la longitud del pie
+# (0,31–0,40 mm por cm; Nielsen et al., 2009, con 25,3 cm de longitud media).
+ARCH_DROP_REF = 6.0                 # mm
+ARCH_DROP_PER_CM = 0.35             # mm por cm de longitud del pie
+ARCH_DROP_REF_LENGTH = 25.3         # cm
+
+
+def arch_drop_for_length(length_mm: float) -> float:
+    return float(np.clip(ARCH_DROP_REF + ARCH_DROP_PER_CM * (length_mm / 10.0 - ARCH_DROP_REF_LENGTH), 3.0, 10.0))
 
 
 @dataclass
@@ -107,7 +145,8 @@ class SimParams:
     split_left: float = 50.0            # % del peso sobre el pie izquierdo (hipótesis)
     mode: str = "reparto"               # "reparto" | "centro_masas"
     load_point: float = 0.32            # línea de carga de cada pie (fracción de la longitud desde el talón)
-    arch_drop: float = 6.0              # mm: descenso del arco medial con la carga de bipedestación (caída del navicular)
+    arch_drop: float | None = None      # mm con medio peso (caída del navicular); None = según la longitud del pie
+    height_cm: float = 0.0              # estatura (cm); 0 = desconocida
     loaded_scan: bool = False           # el escaneo se tomó en carga (el arco ya descendió)
     toe_flexor: float = 700.0           # N·mm por pie (con medio peso): momento flexor de los dedos (flexores + fascia)
     toe_max_flexion: float = 50.0       # grados: giro máximo de un dedo desde la postura del escaneo hasta apoyar
@@ -125,7 +164,7 @@ class SimParams:
         d = d or {}
         out = cls()
         for k in ("mass", "split_left", "load_point", "com_x", "com_y_frac", "nonlinearity_scale", "spread",
-                  "contact_threshold", "resolution", "arch_drop", "toe_flexor", "toe_max_flexion"):
+                  "contact_threshold", "resolution", "arch_drop", "toe_flexor", "toe_max_flexion", "height_cm"):
             if d.get(k) is not None:
                 setattr(out, k, float(d[k]))
         if d.get("loaded_scan") is not None:
@@ -339,10 +378,31 @@ def _footprint(mesh: Mesh, grid: Grid) -> np.ndarray:
     return rasterize(mesh.triangles, grid)["count"] > 0
 
 
+# Longitud del pie / estatura: 14,6–15,1 % sin carga (Xiong et al., 2009); suele quedar entre el 14 y
+# el 16 %. Fuera de 13–17,5 % lo más probable es que el escaneo tenga otra escala (unidades) o
+# que la estatura sea errónea.
+FOOT_STATURE_RANGE = (0.13, 0.175)
+
+
+def scale_check(feet: dict[str, FootGeometry], height_cm: float) -> list[str]:
+    """Comprueba que la longitud de cada pie es coherente con la estatura (escala del escaneo)."""
+    if not height_cm or height_cm <= 0:
+        return []
+    out = []
+    for s in SIDES:
+        r = feet[s].length / (10.0 * height_cm)
+        if not (FOOT_STATURE_RANGE[0] <= r <= FOOT_STATURE_RANGE[1]):
+            out.append(f"El pie {s} mide {feet[s].length:.0f} mm, el {100 * r:.1f} % de la estatura "
+                       f"({height_cm:.0f} cm); lo habitual es el 14–16 %. Compruebe la estatura y las unidades "
+                       "del escaneo.")
+    return out
+
+
 def place_feet(feet: dict[str, FootGeometry], p: StanceParams) -> tuple[dict[str, Placement], dict]:
     """Coloca los dos pies en el suelo común sin solaparse."""
-    sep = float(p.heel_separation)
-    warnings = []
+    sep, sep_source = p.resolved_separation()
+    requested = sep
+    warnings = scale_check(feet, p.height_cm)
     adjusted = 0.0
     for _ in range(60):
         pl = {
@@ -363,7 +423,8 @@ def place_feet(feet: dict[str, FootGeometry], p: StanceParams) -> tuple[dict[str
     if adjusted > 0:
         warnings.append(f"Con la separación indicada las huellas se solapaban o quedaban a menos de "
                         f"{p.min_gap:g} mm: se ha aumentado la separación entre talones a {sep:.0f} mm.")
-    info = {"heel_separation_mm": sep, "requested_heel_separation_mm": p.heel_separation,
+    info = {"heel_separation_mm": sep, "requested_heel_separation_mm": requested,
+            "heel_separation_source": sep_source, "height_cm": p.height_cm or None,
             "separation_adjusted_mm": adjusted, "toe_out_left_deg": p.toe_out_left,
             "toe_out_right_deg": p.toe_out_right, "angle_between_feet_deg": p.toe_out_left + p.toe_out_right,
             "advance_right_mm": p.advance_right, "warnings": warnings}
@@ -457,6 +518,7 @@ class FootField:
     toes: ToeModel              # dedos articulados
     arch_shape: np.ndarray      # forma (0–1) del descenso del arco
     mtp_line: float             # fracción media de la longitud de los ejes MTF
+    arch: dict = field(default_factory=dict)   # medidas del arco en el escaneo sin carga
 
     @property
     def toe_mask(self) -> np.ndarray:
@@ -685,6 +747,46 @@ def _regions(local: np.ndarray, mask: np.ndarray, L: float, medial_sign: float, 
     return reg, tml
 
 
+ARCH_HALF_SPAN = 0.25           # fracción de la longitud por detrás del ápice con descenso del arco
+
+
+def measure_arch(sn: np.ndarray, tml: np.ndarray, h: np.ndarray, sel: np.ndarray, L: float) -> dict:
+    """Medidas del arco en el escaneo sin carga, con el pie apoyado en su plano de apoyo.
+
+    * Altura del arco: la del borde medial de la planta (tercio medial de la anchura) en su punto
+      más alto del mediopié; se da en mm y en % de la longitud del pie.
+    * Ápice: posición de ese punto (fracción de la longitud desde el centro del talón); bajo él está
+      el navicular.
+    * Holgura lateral: altura del borde lateral en el mediopié (cuboides, base del 5.º MTT). Si es
+      de pocos mm, el borde lateral apoya enseguida y el mediopié carga más.
+    """
+    edges = np.arange(0.15, 0.66, 0.025)
+    med = sel & (tml > 0.03) & (tml < 0.33)
+    lat = sel & (tml > 0.70) & (tml < 0.97)
+    prof_m, prof_l, centers = [], [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        m = med & (sn >= a) & (sn < b)
+        q = lat & (sn >= a) & (sn < b)
+        if m.sum() < 3 or q.sum() < 3:
+            continue
+        centers.append(0.5 * (a + b))
+        prof_m.append(float(np.median(h[m])))
+        prof_l.append(float(np.min(h[q])))
+    if len(centers) < 4:
+        return {"apex_frac": 0.40, "height_mm": None, "height_pct": None, "lateral_clearance_mm": None,
+                "measured": False}
+    c, pm, pl = np.array(centers), np.array(prof_m), np.array(prof_l)
+    win = (c >= 0.22) & (c <= 0.58)
+    i = int(np.flatnonzero(win)[np.argmax(pm[win])]) if win.any() else int(np.argmax(pm))
+    apex = float(np.clip(c[i], 0.28, 0.52))
+    mid = (c >= 0.35) & (c <= 0.58)
+    lat_clear = float(np.median(pl[mid])) if mid.any() else float(np.median(pl))
+    return {"apex_frac": apex, "height_mm": float(pm[i]), "height_pct": float(100.0 * pm[i] / L),
+            "lateral_clearance_mm": lat_clear, "measured": True,
+            "profile": {"frac": c.round(3).tolist(), "medial_mm": pm.round(2).tolist(),
+                        "lateral_min_mm": pl.round(2).tolist()}}
+
+
 def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict,
                 toe_max_flexion_deg: float = 50.0) -> FootField:
     world = pl.apply(foot.sole_local)
@@ -715,15 +817,25 @@ def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict,
     smooth = lambda f, out: np.where(mask, ndimage.gaussian_filter(f, sig) / np.maximum(wm, 1e-9), out)  # noqa: E731
     th, e0, be = smooth(th, 1.0), smooth(e0, 0.0), smooth(be, 1.0)
     sn = local[..., 1] / foot.length
-    # Descenso del arco longitudinal interno: máximo bajo el navicular (lado medial del mediopié);
-    # la columna lateral (calcáneo-cuboides-4.º/5.º MTT) es mucho más rígida y no se hace descender.
-    bx = np.where((sn > 0.20) & (sn < 0.70), np.sin(np.pi * (sn - 0.20) / 0.50) ** 2, 0.0)
+    # Arco longitudinal interno medido en el escaneo (sin carga): perfil de altura del borde medial
+    # a lo largo del pie. El descenso con la carga es máximo en su ápice (bajo el navicular) y nulo
+    # en la columna lateral (calcáneo-cuboides-4.º/5.º MTT), mucho más rígida.
+    arch = measure_arch(sn, tml, hh, mask & (toes.cell_toe < 0), foot.length)
+    # El arco va del apoyo del talón a la 1.ª cabeza metatarsiana (eje MTF del hallux), con el
+    # máximo en el ápice medido; el descenso sigue esa misma forma.
+    a0 = arch["apex_frac"]
+    back = max(0.08, a0 - ARCH_HALF_SPAN)
+    front = (float(toes.axis_y[0]) / foot.length - 0.03) if toes.active and toes.present[0] else 0.66
+    front = float(np.clip(front, a0 + 0.12, 0.75))
+    d = np.where(sn < a0, (sn - a0) / (a0 - back), (sn - a0) / (front - a0))
+    bx = np.where(np.abs(d) < 1.0, np.cos(0.5 * np.pi * d) ** 2, 0.0)
+    arch["front_frac"], arch["back_frac"] = front, back
     med = np.clip((0.6 - tml) / 0.5, 0.0, 1.0)
-    arch = np.where(mask & (toes.cell_toe < 0), bx * med * med * (3 - 2 * med), 0.0)
+    arch_shape = np.where(mask & (toes.cell_toe < 0), bx * med * med * (3 - 2 * med), 0.0)
     mtp_line = float(np.mean(toes.axis_y[toes.present])) / foot.length if toes.active else 0.73
     toe_line = mtp_line + MTP_TO_SULCUS if toes.active else 0.80
     return FootField(foot.declared_side, mask, h, np.maximum(th, 1.0), e0, reg, local, toe_line,
-                     np.maximum(be, 0.1), toes, arch, mtp_line)
+                     np.maximum(be, 0.1), toes, arch_shape, mtp_line, arch)
 
 
 def _base_height(ff: FootField, arch_drop: float) -> np.ndarray:
@@ -796,8 +908,10 @@ def _solve_toes(ff: FootField, w: float, tp: float, tr: float, pivot: np.ndarray
 
             def f(x):
                 return float((_law(np.maximum(b0 + mg * x, 0.0) / tg, eg, bg) * ag).sum()) - tq[g]
-            own = mg >= 0.5
-            hi_g = min(hi, float(np.min((TOE_MAX_STRAIN * tg[own] - b0[own]) / mg[own]))) if own.any() else hi
+            # límite de compresión del pulpejo: sobre el 3 % de celdas más comprimidas del dedo, no
+            # sobre una sola celda (sería sensible a la rejilla)
+            own = (mg >= 0.5) & (b0 + mg * hi > 0)
+            hi_g = min(hi, float(np.percentile((TOE_MAX_STRAIN * tg[own] - b0[own]) / mg[own], 3))) if own.any() else hi
             hi_g = max(hi_g, lo)
             fl, fh = f(lo), f(hi_g)
             if fh <= 0:
@@ -935,7 +1049,8 @@ def _solve_foot(ff: FootField, grid: Grid, target_F: float, target_cop: np.ndarr
         strain = (base + ff.toes.press_cells(toe_press)) / th_c
         wh = ff.toes.weight[:, 0]
         for k, own in enumerate((wh >= 0.5, wh < 0.5)):
-            capped[k] = bool(own.any() and strain[own].max() >= TOE_MAX_STRAIN - 1e-6)
+            own = own & (strain > 0)
+            capped[k] = bool(own.any() and np.percentile(strain[own], 97) >= TOE_MAX_STRAIN - 1e-6)
     for k, g in enumerate(TOE_GROUPS):
         if (ff.toes.present & ff.toes.reach & g).any() and not capped[k]:
             toe_eq[k] = toe_m[g].sum() - req[g].sum()
@@ -998,10 +1113,19 @@ def simulate(feet: dict[str, FootGeometry], placements: dict[str, Placement], sp
         cops = {sd: _midline_point(fields[sd], L[sd], frac) for sd in SIDES}
         com_used = None
     # descenso del arco proporcional a la carga del pie (la caída del navicular se mide con medio peso por pie)
-    drops = {sd: (0.0 if sp.loaded_scan else sp.arch_drop * targets[sd] / (0.5 * W)) for sd in SIDES}
+    # descenso del arco con medio peso por pie: el indicado o, si no, el típico para la longitud de
+    # cada pie (la caída del navicular crece con ella); proporcional a la carga del pie
+    drop_half = {sd: (float(sp.arch_drop) if sp.arch_drop is not None and sp.arch_drop >= 0
+                      else arch_drop_for_length(feet[sd].length)) for sd in SIDES}
+    drops = {sd: (0.0 if sp.loaded_scan else drop_half[sd] * targets[sd] / (0.5 * W)) for sd in SIDES}
+    warnings.extend(scale_check(feet, sp.height_cm))
     flex = {sd: sp.toe_flexor * targets[sd] / (0.5 * W) for sd in SIDES}
     sols = {sd: _solve_foot(fields[sd], grid, targets[sd], cops[sd], spread_px, sd, drops[sd], flex[sd])
             for sd in SIDES}
+    for sd in SIDES:
+        sols[sd]["arch_drop_source"] = ("escaneo en carga" if sp.loaded_scan else
+                                        "indicado por el usuario" if sp.arch_drop is not None and sp.arch_drop >= 0
+                                        else "según la longitud del pie (Nielsen et al., 2009)")
     P = {sd: sols[sd]["p"] for sd in SIDES}
     result = _report(feet, placements, fields, P, sols, grid, sp, W, frac, com_used, warnings)
     result["_arrays"] = {"grid": grid, "pressure": P, "fields": fields}
@@ -1076,6 +1200,8 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         "contact_area_cm2": area, "mean_kPa": float(F / (area * 1e-4) / 1e3) if area > 0 else 0.0,
         "peak_kPa": float(p.max()), "cop_world_mm": cop.tolist(),
         "cop_local_mm": cop_local.tolist(), "cop_from_heel_pct": float(100.0 * cop_local[1] / foot.length),
+        # desde el punto más posterior del talón, como en la literatura de bipedestación (31–58 %)
+        "cop_from_heel_edge_pct": float(100.0 * (cop_local[1] - ff.local[..., 1][ff.mask].min()) / foot.length),
         "max_compression_mm": float((eps * ff.thick).max()), "max_tissue_strain_pct": float(100.0 * eps.max()),
         "region_strain_pct": {k: float(100.0 * eps[ff.region == i].max()) if (ff.region == i).any() else 0.0
                               for i, k in enumerate(REGION_KEYS)},
@@ -1090,6 +1216,9 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         "toes_pct": float(sum(r["pct_foot"] for r in regions if r["key"] in ("hallux", "dedos"))),
         "midfoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"] == "mediopie")),
         "arch_drop_mm": float(sol["arch_drop"]),
+        "arch_drop_source": sol.get("arch_drop_source", ""),
+        "arch": {k: v for k, v in ff.arch.items()},
+        "footprint_type": _footprint_type(arch_index),
         "mtp_line_pct": 100.0 * ff.mtp_line,
         "roll_deg": float(np.degrees(sol["roll"]) * foot.medial_sign),
         "load_line_local_mm": np.asarray(sol["pivot"]).tolist(), "cop_error_mm": sol["cop_error_mm"],
@@ -1098,6 +1227,15 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         "rearfoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"].startswith("talon"))),
         "forefoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"] in ("met1", "met23", "met45"))),
     }
+
+
+def _footprint_type(ai: float) -> str:
+    """Tipo de huella según el índice del arco de Cavanagh y Rodgers (1987)."""
+    if ai <= 0.21:
+        return "arco alto (índice ≤ 0,21)"
+    if ai < 0.26:
+        return "arco normal (0,21–0,26)"
+    return "arco bajo (índice ≥ 0,26)"
 
 
 def _asym(a: float, b: float) -> float:
@@ -1156,7 +1294,7 @@ def _report(feet, placements, fields, P, sols, grid, sp, W, frac, com, warnings)
                             ("midfoot_pct", "Carga en mediopié", "% del pie"),
                             ("forefoot_pct", "Carga en antepié (metatarsos)", "% del pie"),
                             ("toes_pct", "Carga en dedos", "% del pie"), ("arch_index", "Índice del arco", ""),
-                            ("cop_from_heel_pct", "CoP desde el talón", "% longitud")):
+                            ("cop_from_heel_edge_pct", "CoP desde el borde del talón", "% longitud")):
         l, r = per["izquierdo"][key], per["derecho"][key]
         comp.append({"key": key, "name": name, "unit": unit, "left": l, "right": r,
                      "difference": l - r, "asymmetry_pct": _asym(l, r)})

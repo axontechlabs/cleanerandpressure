@@ -5,6 +5,7 @@ Uso:
   python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 -o resultados/
   python cli_bilateral.py izq.stl der.stl --peso 82 --reparto-izquierdo 45 -o salida/
   python cli_bilateral.py izq.stl der.stl --peso 70 --centro-masas 15 38 -o salida/
+  python cli_bilateral.py izq.stl der.stl --peso 70 --estatura 165 --caida-navicular 7 -o salida/
 
 Escribe en la carpeta de salida: los dos STL limpios (independientes, en el marco de su
 archivo), el mapa bilateral y los individuales en PNG, el CSV de presiones y el JSON de
@@ -31,7 +32,11 @@ def main(argv=None) -> int:
     ap.add_argument("--reparto-izquierdo", type=float, default=50.0, help="%% del peso en el pie izquierdo (hipótesis)")
     ap.add_argument("--centro-masas", type=float, nargs=2, metavar=("X_MM", "Y_PCT"),
                     help="proyección del centro de masas: mm a la derecha del punto medio y %% de la longitud del pie")
-    ap.add_argument("--separacion", type=float, default=170.0, help="mm entre centros de talón")
+    ap.add_argument("--separacion", type=float, default=None,
+                    help="mm entre centros de talón (por defecto: según la estatura o 170)")
+    ap.add_argument("--estatura", type=float, default=None, help="estatura en cm (opcional)")
+    ap.add_argument("--caida-navicular", type=float, default=None,
+                    help="descenso del arco en mm con medio peso (por defecto: según la longitud del pie)")
     ap.add_argument("--apertura", type=float, nargs=2, default=(7.0, 7.0), metavar=("IZQ", "DER"))
     ap.add_argument("--linea-carga", type=float, default=32.0, help="%% de la longitud desde el talón")
     ap.add_argument("--config", help="JSON con {'limpieza':{}, 'postura':{}, 'simulacion':{}}")
@@ -50,9 +55,10 @@ def main(argv=None) -> int:
             return 2
         for side in ("izquierdo", "derecho"):
             (out / f"pie_{side}_limpio.stl").write_bytes(s.export_stl(side))
-        stance = {"heel_separation": a.separacion, "toe_out_left": a.apertura[0], "toe_out_right": a.apertura[1],
+        stance = {"heel_separation": a.separacion, "height_cm": a.estatura, "toe_out_left": a.apertura[0], "toe_out_right": a.apertura[1],
                   "load_point": a.linea_carga / 100.0, **cfg.get("postura", {})}
         sim = {"mass": a.peso, "split_left": a.reparto_izquierdo, "load_point": a.linea_carga / 100.0,
+               "height_cm": a.estatura, "arch_drop": a.caida_navicular,
                **cfg.get("simulacion", {})}
         if a.centro_masas:
             sim.update(mode="centro_masas", com_x=a.centro_masas[0], com_y_frac=a.centro_masas[1] / 100.0)
