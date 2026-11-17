@@ -1,0 +1,23 @@
+{
+  "name": "3D Scan Cleaner + presión plantar bilateral",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "postCreateCommand": "pip install --user -r requirements-dev.txt",
+  "postAttachCommand": {
+    "aplicacion": "python -m app.main --host 0.0.0.0 --port 8000 --no-browser"
+  },
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Aplicación",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

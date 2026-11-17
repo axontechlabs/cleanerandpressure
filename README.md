@@ -46,7 +46,7 @@ Con el código ya subido a GitHub, abra este enlace con su cuenta de GitHub:
 **https://codespaces.new/axontechlabs/cleanerandpressure**
 
 Pulse *Create codespace*. GitHub prepara una máquina en la nube, instala las dependencias y arranca
-la aplicación sola (configurado en `.devcontainer/`); al terminar ofrece abrir el puerto 8000 en una
+la aplicación sola (configurado en `.devcontainer/devcontainer.json`); al terminar ofrece abrir el puerto 8000 en una
 pestaña nueva del navegador (*Open in Browser*). Si no aparece el aviso, abra la pestaña *Ports* y
 pulse el icono del globo junto al puerto 8000. El procesamiento se ejecuta en el Codespace; el visor
 3D usa la GPU de su navegador. Para volver a arrancarla manualmente dentro del Codespace:
@@ -130,16 +130,32 @@ Botón **Modo bilateral (dos pies) →** en la cabecera, o directamente `http://
 1. Cargue el STL del pie izquierdo y el del derecho (o *Ejemplo sintético (pareja)*).
 2. **Procesar ambos escaneos**: cada pie pasa por el mismo procesamiento automático que en la
    aplicación de un pie y se obtienen dos STL limpios e independientes, validados.
-3. Introduzca el **peso** y el **reparto izquierdo/derecho**. El 50/50 es una hipótesis, no una
-   medición. Si conoce la proyección del centro de masas, elija ese modo y el reparto resultará del
-   equilibrio de momentos.
+3. Introduzca el **peso**, la **estatura** (opcional) y el **reparto izquierdo/derecho**. El 50/50 es
+   una hipótesis, no una medición. Si conoce la proyección del centro de masas, elija ese modo y el
+   reparto resultará del equilibrio de momentos.
 4. **Colocar pies y ver en 3D**: postura media por defecto (17 cm entre talones, 7° de apertura por
-   pie), ajustable. Se detecta qué pie es cada escaneo y se avisa si están cruzados.
+   pie). Si indica la estatura, la separación se estima a partir de ella y se comprueba que la
+   longitud de los pies es coherente con la estatura (escala del escaneo). Se detecta qué pie es
+   cada escaneo y se avisa si están cruzados.
 5. **Simular bipedestación bilateral**: muestra un único mapa con los dos pies en escala común de kPa,
    los mapas individuales, el 3D coloreado y el informe del conjunto, de cada pie y comparativo.
+   El modelo, a partir del escaneo sin carga:
+   - mide el arco interno (altura, ápice) y el borde lateral del mediopié;
+   - hace descender el arco medial y la columna lateral con la carga (por defecto, según la longitud
+     del pie; puede escribir la caída del navicular medida). La banda lateral del mediopié une el
+     talón con el antepié, como en una huella estática normal;
+   - asienta cada uno de los cinco dedos en su articulación metatarsofalángica hasta que apoya y lo
+     aprieta contra el suelo con el momento flexor: los dedos aparecen en el mapa con carga ligera.
 6. Exportación: dos STL limpios, tres PNG, CSV de presiones y JSON de resultados.
 
-Sin interfaz: `.venv/bin/python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 -o resultados/`.
+Sin interfaz:
+
+```bash
+.venv/bin/python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 -o resultados/
+.venv/bin/python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 --estatura 165 -o resultados/
+.venv/bin/python cli_bilateral.py izquierdo.stl derecho.stl --peso 70 --caida-navicular 8 -o resultados/
+```
+
 El modelo físico, sus hipótesis y sus limitaciones están en [docs/BILATERAL.md](docs/BILATERAL.md).
 
 ## Línea de comandos
@@ -230,7 +246,7 @@ run.sh, install.sh, Dockerfile, .devcontainer/, .github/workflows/
 .venv/bin/python -m pytest
 ```
 
-47 pruebas (unos tres minutos): 33 del procesamiento de un pie y 14 del modo bilateral
+55 pruebas (unos cinco minutos): 33 del procesamiento de un pie y 22 del modo bilateral
 (descritas en [docs/BILATERAL.md](docs/BILATERAL.md)). Los escenarios sintéticos tienen una planta analítica
 conocida (arco de 16 mm, almohadillas de los dedos, surco metatarsal) con paredes laterales
 conectadas, orientación y posición aleatorias, y defectos controlados. Resultados con ~50 000 caras
