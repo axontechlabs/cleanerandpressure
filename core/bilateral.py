@@ -2,9 +2,13 @@
 
 Modelo físico
 -------------
-* Cada pie es un **sólido rígido** (esqueleto) recubierto de **tejido blando plantar** cuyo
-  espesor y rigidez dependen de la región anatómica. La geometría de partida es la superficie
-  plantar limpia y suavizada que produce el pipeline de un pie (sin carga).
+* Cada pie es un **segmento principal rígido** (retropié, mediopié y metatarsianos, con un arco
+  interno que desciende con la carga) más **cinco dedos articulados**, recubiertos de **tejido
+  blando plantar** cuyo espesor y rigidez dependen de la región anatómica. La geometría de partida
+  es la superficie plantar limpia y suavizada que produce el pipeline de un pie (sin carga).
+* **Dedos**: cada uno gira en su articulación metatarsofalángica hasta que su pulpejo toca el suelo
+  (en un escaneo sin carga suelen quedar levantados) y se aprieta contra él con el momento flexor
+  (flexores + fascia plantar) hasta el equilibrio de momentos alrededor de las MTF.
 * El suelo es un **plano rígido común** a los dos pies.
 * El tejido se modela como una cimentación elástica no lineal (Winkler) con acoplamiento
   lateral: en cada punto, la compresión δ = w − h (aproximación del pie w menos la altura de la
@@ -105,8 +109,8 @@ class SimParams:
     load_point: float = 0.32            # línea de carga de cada pie (fracción de la longitud desde el talón)
     arch_drop: float = 6.0              # mm: descenso del arco medial con la carga de bipedestación (caída del navicular)
     loaded_scan: bool = False           # el escaneo se tomó en carga (el arco ya descendió)
-    toe_stiffness: float = 4000.0       # N·mm/rad: rigidez pasiva de la articulación metatarsofalángica (MTF)
-    toe_flexor: float = 400.0           # N·mm por pie (con medio peso): tono de los flexores de los dedos
+    toe_flexor: float = 700.0           # N·mm por pie (con medio peso): momento flexor de los dedos (flexores + fascia)
+    toe_max_flexion: float = 50.0       # grados: giro máximo de un dedo desde la postura del escaneo hasta apoyar
     com_x: float = 0.0                  # mm a la derecha del punto medio entre talones
     com_y_frac: float = 0.32            # posición AP del centro de masas (fracción de la longitud media del pie)
     nonlinearity_scale: float = 1.0     # factor sobre la β de cada región
@@ -121,7 +125,7 @@ class SimParams:
         d = d or {}
         out = cls()
         for k in ("mass", "split_left", "load_point", "com_x", "com_y_frac", "nonlinearity_scale", "spread",
-                  "contact_threshold", "resolution", "arch_drop", "toe_stiffness", "toe_flexor"):
+                  "contact_threshold", "resolution", "arch_drop", "toe_flexor", "toe_max_flexion"):
             if d.get(k) is not None:
                 setattr(out, k, float(d[k]))
         if d.get("loaded_scan") is not None:
@@ -380,6 +384,64 @@ def _law(eps: np.ndarray, e0: np.ndarray, beta, eps_c: float = 0.7) -> np.ndarra
 
 
 @dataclass
+class ToeModel:
+    """Los cinco dedos como segmentos rígidos, cada uno con su articulación MTF.
+
+    Cada dedo j gira (en el plano sagital del pie) un ángulo θ_j alrededor de un eje transversal
+    situado sobre la cabeza de su metatarsiano, a ``TOE_AXIS_HEIGHT`` mm sobre la piel. θ es
+    positivo hacia el suelo (flexión plantar) y se mide desde la postura del escaneo.
+
+    Cada celda de la zona de los dedos pertenece a uno o, cerca de un límite sin hueco
+    interdigital visible, a dos dedos vecinos (pesos ``weight``, que suman 1): la piel es continua
+    y la transición entre dedos es suave. Donde el escaneo muestra el hueco, el límite es nítido.
+    """
+
+    cells: tuple                # índices (i, j) de las celdas de la zona de los dedos
+    weight: np.ndarray          # (n, 5) pertenencia de cada celda a cada dedo
+    y: np.ndarray               # (n,) coordenada local a lo largo del pie (mm)
+    h: np.ndarray               # (n,) altura sin carga (mm)
+    axis_y: np.ndarray          # (5,) posición del eje MTF de cada dedo (mm)
+    z_axis: np.ndarray          # (5,) altura del eje MTF sobre el suelo (mm)
+    rest: np.ndarray            # (5,) giro de asentamiento por gravedad (rad): el dedo toca el suelo
+    reach: np.ndarray           # (5,) True si el dedo llega al suelo dentro del rango articular
+    present: np.ndarray         # (5,) el dedo tiene celdas
+    cell_toe: np.ndarray        # (nx, ny) dedo principal de cada celda (−1 fuera de los dedos)
+    length: float               # longitud del pie (mm)
+    detected: int               # dedos separados por huecos visibles en la geometría
+    theta_max: float            # rad: giro máximo desde la postura del escaneo
+
+    @property
+    def active(self) -> bool:
+        return bool(self.present.any())
+
+    def heights(self, theta: np.ndarray):
+        """Altura (n,) de las celdas tras girar cada dedo θ_j (exacto) y el brazo (n, 5) de cada una."""
+        dy = self.y[:, None] - self.axis_y[None, :]
+        dz = self.h[:, None] - self.z_axis[None, :]
+        s, c = np.sin(theta)[None, :], np.cos(theta)[None, :]
+        hj = self.z_axis[None, :] - dy * s + dz * c
+        return (self.weight * hj).sum(axis=1), dy * c + dz * s
+
+    def settled(self):
+        """Altura (n,) y brazos (n, 5) con cada dedo asentado (girado hasta tocar el suelo)."""
+        if getattr(self, "_settled", None) is None:
+            self._settled = self.heights(self.rest)
+        return self._settled
+
+    def press_cells(self, press: np.ndarray) -> np.ndarray:
+        """Desplazamiento hacia el suelo (mm) de cada celda para el apoyo (hallux, 2.º–5.º)."""
+        wh = self.weight[:, 0]
+        return wh * press[0] + (1.0 - wh) * press[1]
+
+    def field(self, base: np.ndarray, press: np.ndarray) -> np.ndarray:
+        """Altura con los dedos asentados y apoyados ``press`` mm (por grupo) sobre el suelo."""
+        out = base.copy()
+        if self.active:
+            out[self.cells] = self.settled()[0] - self.press_cells(press)
+        return out
+
+
+@dataclass
 class FootField:
     """Campos de un pie sobre la rejilla común."""
 
@@ -390,17 +452,203 @@ class FootField:
     e0: np.ndarray              # módulo inicial (kPa)
     region: np.ndarray          # índice de región (−1 fuera)
     local: np.ndarray           # coordenadas locales (x, y) de cada celda (mm)
-    toe_line: float             # fracción de la longitud donde empiezan los dedos
+    toe_line: float             # fracción media de la longitud donde empiezan los dedos (surco)
     beta: np.ndarray            # no linealidad del tejido
-    toe_lever: np.ndarray       # brazo (mm) respecto al eje MTF en el segmento de los dedos (0 fuera)
-    toe_rest: float             # giro medio de reposo de los dedos (rad), para el informe
-    toe_rest_map: np.ndarray    # giro de reposo (rad) de cada dedo (franja mediolateral) tras asentarse
+    toes: ToeModel              # dedos articulados
     arch_shape: np.ndarray      # forma (0–1) del descenso del arco
-    mtp_line: float             # fracción de la longitud del eje MTF
+    mtp_line: float             # fracción media de la longitud de los ejes MTF
+
+    @property
+    def toe_mask(self) -> np.ndarray:
+        return self.toes.cell_toe >= 0
 
 
-def _regions(local: np.ndarray, mask: np.ndarray, L: float, medial_sign: float, h: np.ndarray):
-    """Máscara anatómica en coordenadas del pie y línea de los dedos (surco digital)."""
+TOE_NAMES = ("Hallux (1.º)", "2.º dedo", "3.º dedo", "4.º dedo", "5.º dedo")
+# Anchura relativa de cada dedo en la fila de los dedos (medial → lateral): el hallux ocupa
+# aproximadamente un tercio. Se usa si la geometría no separa los cinco dedos.
+TOE_WIDTH_SHARE = np.array([0.31, 0.18, 0.17, 0.17, 0.17])
+# Reparto del momento flexor entre los dos grupos: el flexor largo del hallux actúa solo sobre el
+# 1.º (40 %); los flexores largo y corto de los dedos y la fascia plantar, sobre el 2.º–5.º (60 %,
+# que se reparte entre esos dedos según su geometría).
+TOE_TORQUE_SHARE = np.array([0.40, 0.15, 0.15, 0.15, 0.15])
+TOE_AXIS_HEIGHT = 20.0          # mm: eje MTF sobre la piel (≈ 10 mm de tejido + radio de la cabeza)
+MTP_TO_SULCUS = 0.07            # fracción de la longitud entre el eje MTF y el surco digital (~17 mm)
+TOE_THETA_MIN = np.radians(-30.0)
+
+
+def _forefoot_lines(x: np.ndarray, y: np.ndarray, h: np.ndarray, mask: np.ndarray, L: float):
+    """Eje MTF a lo largo de la fila de los dedos (parábola metatarsiana), por franjas de 4 mm.
+
+    En cada franja mediolateral se busca, en el perfil de alturas a lo largo del pie, la
+    almohadilla de las cabezas metatarsianas (lo más bajo del antepié) y delante el surco digital:
+    un máximo local seguido del pulpejo del dedo, más bajo. Si los dedos están levantados en el
+    escaneo no hay surco: el dedo empieza donde el perfil deja de estar apoyado. Las posiciones se
+    ajustan con una parábola en x (robusta frente a franjas atípicas).
+    """
+    sn = y / L
+    fore = mask & (sn > 0.55)
+    if fore.sum() < 100:
+        return None
+    xs = x[fore]
+    x_lo, x_hi = np.percentile(xs, 1), np.percentile(xs, 99)
+    edges = np.arange(x_lo, x_hi + 4.0, 4.0)
+    xc, ya, wt = [], [], []
+    bin_mm = 2.0
+    for k in range(len(edges) - 1):
+        sel = fore & (x >= edges[k]) & (x < edges[k + 1])
+        if sel.sum() < 15:
+            continue
+        yy, hh = y[sel], h[sel]
+        b = np.floor((yy - 0.55 * L) / bin_mm).astype(int)
+        nb = int(b.max()) + 1
+        prof = np.full(nb, np.inf)
+        np.minimum.at(prof, b, hh)
+        yb = 0.55 * L + (np.arange(nb) + 0.5) * bin_mm
+        ok = np.isfinite(prof)
+        if ok.sum() < 8:
+            continue
+        prof = np.interp(yb, yb[ok], prof[ok])
+        prof = ndimage.uniform_filter1d(prof, 3, mode="nearest")
+        ball = (yb >= 0.58 * L) & (yb <= 0.84 * L)
+        if not ball.any():
+            continue
+        ib = int(np.flatnonzero(ball)[np.argmin(prof[ball])])
+        hb = prof[ib]
+        axis = None
+        # surco: máximo local por delante de la bola con un pulpejo más bajo detrás
+        lim = min(nb - 1, ib + int(0.16 * L / bin_mm))
+        for i in range(ib + 2, lim):
+            if prof[i] >= prof[i - 1] and prof[i] >= prof[i + 1] and prof[i] - prof[i + 1:].min() > 0.8:
+                axis = yb[i] - MTP_TO_SULCUS * L
+                break
+        if axis is None:
+            rise = np.flatnonzero((np.arange(nb) > ib) & (prof > hb + 1.5))
+            if not len(rise):
+                continue
+            axis = yb[rise[0]] - 0.02 * L
+        xc.append(0.5 * (edges[k] + edges[k + 1]))
+        ya.append(axis)
+        wt.append(float(sel.sum()))
+    if len(xc) < 3:
+        return None
+    xc, ya, wt = np.array(xc), np.array(ya), np.array(wt)
+    keep = np.ones(len(xc), bool)
+    for _ in range(3):
+        deg = 2 if keep.sum() >= 6 else 1
+        c = np.polyfit(xc[keep], ya[keep], deg, w=np.sqrt(wt[keep]))
+        r = ya - np.polyval(c, xc)
+        thr = max(6.0, 2.5 * np.median(np.abs(r[keep])))
+        new = np.abs(r) <= thr
+        if new.sum() < 3 or (new == keep).all():
+            break
+        keep = new
+    # Límites anatómicos del eje MTF (desde el centro del talón): de la 5.ª articulación, hacia el
+    # 57 % de la longitud, a la 1.ª, hacia el 66 %, con margen para pies y escaneos atípicos.
+    return lambda xq: np.clip(np.polyval(c, xq), 0.55 * L, 0.78 * L)
+
+
+def _settle_angle(lowest, theta_max: float) -> float:
+    """Menor giro hacia el suelo con el que el punto más bajo del dedo toca el suelo (rad)."""
+    if lowest(0.0) <= 0.0:
+        lo = TOE_THETA_MIN
+        if lowest(lo) <= 0.0:
+            return lo
+        return brentq(lowest, lo, 0.0, xtol=1e-6)
+    if lowest(theta_max) > 0.0:
+        return np.nan
+    return brentq(lowest, 0.0, theta_max, xtol=1e-6)
+
+
+def _build_toes(local: np.ndarray, mask: np.ndarray, h: np.ndarray, L: float, medial_sign: float,
+                res: float, theta_max: float) -> ToeModel:
+    """Localiza los cinco dedos y sus ejes MTF y calcula su asentamiento por gravedad."""
+    x = local[..., 0] * medial_sign              # positivo hacia medial
+    y = local[..., 1]
+    shape = mask.shape
+    none = np.zeros(0, dtype=np.int64)
+    empty = ToeModel((none, none), np.zeros((0, 5)), np.zeros(0), np.zeros(0), np.zeros(5), np.zeros(5),
+                     np.zeros(5), np.zeros(5, bool), np.zeros(5, bool), np.full(shape, -1), L, 0, theta_max)
+    axis_of = _forefoot_lines(x, y, np.where(mask, h, np.inf), mask, L)
+    if axis_of is None:
+        return empty
+    ya = axis_of(x)
+    zone = mask & (y > ya + MTP_TO_SULCUS * L)
+    if zone.sum() * res * res < 300.0:            # menos de 3 cm² de dedos: escaneo sin dedos
+        return empty
+    hh = np.where(mask, h, 0.0)
+    # --- separación de los dedos: perfil mediolateral del giro necesario para tocar el suelo.
+    # Los pulpejos (más prominentes) necesitan menos giro que los espacios interdigitales.
+    xz = x[zone]
+    ang = np.arctan2(hh[zone], np.maximum(y[zone] - ya[zone], 1.0))
+    x0, x1 = float(xz.min()), float(xz.max())
+    nb = max(int(np.ceil(x1 - x0)), 5)
+    b = np.clip(((xz - x0) / (x1 - x0 + 1e-9) * nb).astype(int), 0, nb - 1)
+    prof = np.full(nb, np.inf)
+    np.minimum.at(prof, b, ang)
+    xb = x0 + (np.arange(nb) + 0.5) * (x1 - x0) / nb
+    have = np.isfinite(prof)
+    prof_f = np.interp(xb, xb[have], prof[have])
+    prof_f = np.where(have, prof_f, prof_f.max() + np.radians(10.0))      # huecos sin superficie
+    prof_s = ndimage.gaussian_filter1d(prof_f, 1.5)
+    peaks = [i for i in range(1, nb - 1) if prof_s[i] > prof_s[i - 1] and prof_s[i] >= prof_s[i + 1]
+             and prof_s[i] - max(prof_s[:i].min(), prof_s[i + 1:].min()) > np.radians(0.75)]
+    # límites por proporciones anatómicas (de medial a lateral: x decreciente) …
+    bounds = x1 - np.cumsum(TOE_WIDTH_SHARE)[:-1] * (x1 - x0)
+    sharp = np.zeros(4, bool)
+    # … ajustados al hueco interdigital más cercano que muestre la geometría
+    for k, bx in enumerate(bounds):
+        cand = [xb[i] for i in peaks if abs(xb[i] - bx) <= 0.06 * (x1 - x0) + 2.0]
+        if cand:
+            bounds[k] = min(cand, key=lambda c: abs(c - bx))
+            sharp[k] = True
+    order = np.argsort(-bounds)
+    bounds, sharp = bounds[order], sharp[order]
+    # pertenencia suave (piel continua) salvo donde hay hueco visible
+    width = np.where(sharp, 0.25, 2.5)                                    # mm
+    u = 1.0 / (1.0 + np.exp(-np.clip((bounds[None, :] - xz[:, None]) / width[None, :], -60, 60)))
+    W = np.empty((len(xz), 5))
+    W[:, 0] = 1.0 - u[:, 0]
+    W[:, 1:4] = u[:, :-1] - u[:, 1:]
+    W[:, 4] = u[:, 3]
+    W = np.maximum(W, 0.0)
+    W /= W.sum(axis=1, keepdims=True)
+    cells = np.nonzero(zone)
+    yz, hz = y[zone], hh[zone]
+    main = np.argmax(W, axis=1)
+    present = np.bincount(main, minlength=5)[:5] >= 3
+    axis_y = np.zeros(5)
+    z_axis = np.zeros(5)
+    for t in range(5):
+        sel = main == t
+        xm = float(np.median(xz[sel])) if sel.any() else float(np.mean(bounds))
+        axis_y[t] = float(axis_of(np.array([xm]))[0])
+        # altura del eje: sobre la almohadilla de la cabeza metatarsiana de este dedo
+        ball = mask & (np.abs(x - xm) < 5.0) & (np.abs(y - axis_y[t]) < 6.0)
+        z_axis[t] = (float(np.median(hh[ball])) if ball.any() else 0.0) + TOE_AXIS_HEIGHT
+    cell_toe = np.full(shape, -1)
+    cell_toe[cells] = main
+    tm = ToeModel(cells, W, yz, hz, axis_y, z_axis, np.zeros(5), np.zeros(5, bool), present, cell_toe, L,
+                  int(sharp.sum()), theta_max)
+    # Asentamiento por gravedad: cada dedo gira hasta que su punto más bajo toca el suelo (los
+    # vecinos quedan en su postura del escaneo mientras se busca).
+    rest = np.zeros(5)
+    for t in range(5):
+        if not present[t]:
+            continue
+        own = W[:, t] > 0.5
+
+        def lowest(a, t=t, own=own):
+            hj = z_axis[t] - (yz[own] - axis_y[t]) * np.sin(a) + (hz[own] - z_axis[t]) * np.cos(a)
+            return float(hj.min())
+        r = _settle_angle(lowest, theta_max)
+        tm.reach[t] = bool(np.isfinite(r))
+        rest[t] = r if np.isfinite(r) else theta_max
+    tm.rest = rest
+    return tm
+
+
+def _regions(local: np.ndarray, mask: np.ndarray, L: float, medial_sign: float, toes: ToeModel):
+    """Máscara anatómica en coordenadas del pie (dedos según el modelo articulado)."""
     sn = local[..., 1] / max(L, 1e-9)
     x = local[..., 0] * medial_sign              # positivo hacia medial
     nb = 50
@@ -413,39 +661,32 @@ def _regions(local: np.ndarray, mask: np.ndarray, L: float, medial_sign: float, 
             continue
         lo, hi = np.nanmin(xm[sel]), np.nanmax(xm[sel])
         tml[sel] = (hi - x[sel]) / max(hi - lo, 1e-9)       # 0 = borde medial, 1 = lateral
-    # surco digital: banda del antepié más alejada del suelo entre el 70 % y el 92 %
-    toe = 0.80
-    cand = mask & (tml > 0.15) & (tml < 0.85) & (sn > 0.68) & (sn < 0.93)
-    if cand.sum() > 50:
-        edges = np.linspace(0.68, 0.93, 26)
-        prof = np.array([np.median(h[cand & (sn >= edges[i]) & (sn < edges[i + 1])])
-                         if (cand & (sn >= edges[i]) & (sn < edges[i + 1])).any() else np.nan
-                         for i in range(25)])
-        if np.isfinite(prof).sum() > 10:
-            prof = np.where(np.isfinite(prof), prof, np.nanmin(prof))
-            prof = ndimage.uniform_filter1d(prof, 3)
-            i = int(np.argmax(prof))
-            prom = prof[i] - min(prof[: i + 1].min(), prof[i:].min())
-            if prom > 0.5 and 1 <= i <= 23:
-                toe = float(0.5 * (edges[i] + edges[i + 1]))
     reg = np.full(sn.shape, -1, dtype=np.int64)
     idx = {k: i for i, k in enumerate(REGION_KEYS)}
     heel = sn < 0.30
     reg[heel & (tml < 0.5)] = idx["talon_medial"]
     reg[heel & (tml >= 0.5)] = idx["talon_lateral"]
     reg[(sn >= 0.30) & (sn < 0.60)] = idx["mediopie"]
-    fore = (sn >= 0.60) & (sn < toe)
+    tm = toes.cell_toe >= 0
+    if toes.active:
+        fore = (sn >= 0.60) & ~tm
+    else:
+        fore = (sn >= 0.60) & (sn < 0.80)
     reg[fore & (tml < 0.33)] = idx["met1"]
     reg[fore & (tml >= 0.33) & (tml < 0.67)] = idx["met23"]
     reg[fore & (tml >= 0.67)] = idx["met45"]
-    toes = sn >= toe
-    reg[toes & (tml < 0.38)] = idx["hallux"]
-    reg[toes & (tml >= 0.38)] = idx["dedos"]
+    if toes.active:
+        reg[toes.cell_toe == 0] = idx["hallux"]
+        reg[toes.cell_toe > 0] = idx["dedos"]
+    else:
+        reg[(sn >= 0.80) & (tml < 0.38)] = idx["hallux"]
+        reg[(sn >= 0.80) & (tml >= 0.38)] = idx["dedos"]
     reg[~mask] = -1
-    return reg, toe, tml
+    return reg, tml
 
 
-def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict) -> FootField:
+def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict,
+                toe_max_flexion_deg: float = 50.0) -> FootField:
     world = pl.apply(foot.sole_local)
     tri = world.triangles.copy()
     tri[..., 2] *= -1.0                       # el z-buffer guarda el máximo: se busca la mínima altura
@@ -456,7 +697,11 @@ def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict) -> 
     X, Y = np.meshgrid(xs, ys, indexing="ij")
     local = pl.inverse_xy(np.stack([X.ravel(), Y.ravel()], axis=1)).reshape(X.shape + (2,))
     hh = np.where(mask, h, 0.0)
-    reg, toe, tml = _regions(local, mask, foot.length, foot.medial_sign, hh)
+    # Dedos: cada uno es un segmento rígido que gira alrededor de su articulación MTF. Asentamiento
+    # por gravedad (y tono de los flexores): cada dedo gira hasta que su pulpejo toca el suelo.
+    toes = _build_toes(local, mask, h, foot.length, foot.medial_sign, grid.res,
+                       np.radians(max(toe_max_flexion_deg, 0.0)))
+    reg, tml = _regions(local, mask, foot.length, foot.medial_sign, toes)
     th = np.zeros(X.shape)
     e0 = np.zeros(X.shape)
     be = np.zeros(X.shape)
@@ -470,68 +715,134 @@ def build_field(foot: FootGeometry, pl: Placement, grid: Grid, tissue: dict) -> 
     smooth = lambda f, out: np.where(mask, ndimage.gaussian_filter(f, sig) / np.maximum(wm, 1e-9), out)  # noqa: E731
     th, e0, be = smooth(th, 1.0), smooth(e0, 0.0), smooth(be, 1.0)
     sn = local[..., 1] / foot.length
-    # Segmento de los dedos: gira alrededor del eje metatarsofalángico (MTF), situado algo por
-    # detrás del surco digital. Asentamiento por gravedad: con el tono de los flexores, los dedos
-    # relajados descienden hasta tocar el suelo (sin carga).
-    mtp = toe - 0.07
-    lever = np.where(mask & (sn > mtp), (sn - mtp) * foot.length, 0.0)
-    # Cada dedo tiene su propia articulación MTF: el asentamiento se calcula por franjas
-    # mediolaterales de ~9 mm (aprox. la anchura de un dedo). Cada franja gira hasta que su punto
-    # más bajo toca el suelo, dentro del rango de flexión plantar (35°).
-    toe_rest_map = np.zeros(X.shape)
-    toes = lever > 0
-    if toes.any():
-        xl = local[..., 0]
-        x0 = float(xl[toes].min())
-        strip = np.floor((xl - x0) / 9.0).astype(int)
-        rests = []
-        for k in np.unique(strip[toes]):
-            cells = toes & (strip == k)
-            ok = cells & (lever > 8.0)
-            if not ok.any():
-                continue
-            r = float(np.clip(np.min(hh[ok] / lever[ok]), -0.2, np.radians(35.0)))
-            toe_rest_map[cells] = r
-            rests.append(r)
-        # transición suave entre franjas vecinas (piel y tejido continuos)
-        wt = ndimage.gaussian_filter(toes.astype(float), 2.0 / grid.res)
-        toe_rest_map = np.where(toes, ndimage.gaussian_filter(toe_rest_map, 2.0 / grid.res) / np.maximum(wt, 1e-9), 0.0)
-        toe_rest = float(np.mean(rests)) if rests else 0.0
-    else:
-        toe_rest = 0.0
     # Descenso del arco longitudinal interno: máximo bajo el navicular (lado medial del mediopié);
     # la columna lateral (calcáneo-cuboides-4.º/5.º MTT) es mucho más rígida y no se hace descender.
     bx = np.where((sn > 0.20) & (sn < 0.70), np.sin(np.pi * (sn - 0.20) / 0.50) ** 2, 0.0)
     med = np.clip((0.6 - tml) / 0.5, 0.0, 1.0)
-    arch = np.where(mask, bx * med * med * (3 - 2 * med), 0.0)
-    return FootField(foot.declared_side, mask, h, np.maximum(th, 1.0), e0, reg, local, toe,
-                     np.maximum(be, 0.1), lever, toe_rest, toe_rest_map, arch, mtp)
+    arch = np.where(mask & (toes.cell_toe < 0), bx * med * med * (3 - 2 * med), 0.0)
+    mtp_line = float(np.mean(toes.axis_y[toes.present])) / foot.length if toes.active else 0.73
+    toe_line = mtp_line + MTP_TO_SULCUS if toes.active else 0.80
+    return FootField(foot.declared_side, mask, h, np.maximum(th, 1.0), e0, reg, local, toe_line,
+                     np.maximum(be, 0.1), toes, arch, mtp_line)
 
 
-def _pressure(ff: FootField, w: float, tp: float, tr: float, pivot: np.ndarray, spread_px: float,
-              toe_angle: float = 0.0, arch_drop: float = 0.0) -> np.ndarray:
-    """Presión para una configuración del pie.
-
-    * ``w``: aproximación vertical del pie; ``tp`` (cabeceo) baja la parte anterior y ``tr``
-      (alabeo) el lado +X local, alrededor de ``pivot`` (línea de carga, coords. locales).
-    * ``toe_angle``: giro adicional de los dedos (rad, + hacia el suelo) respecto a su reposo
-      asentado, alrededor de los ejes MTF.
-    * ``arch_drop``: descenso del arco (mm); el esqueleto no atraviesa el suelo: el descenso local
-      se limita a la holgura que queda hasta tocarlo: el arco baja hasta apoyar, y la compresión
-      posterior del tejido la produce la carga, no el descenso.
-    """
+def _base_height(ff: FootField, arch_drop: float) -> np.ndarray:
+    """Altura sin carga tras el descenso del arco (sin el giro del pie ni el de los dedos)."""
     h = ff.h
     if arch_drop:
         drop = np.minimum(arch_drop * ff.arch_shape, np.maximum(np.where(ff.mask, h, 0.0), 0.0))
         h = h - drop
+    return h
+
+
+TOE_GROUPS = (np.array([True, False, False, False, False]), np.array([False, True, True, True, True]))
+TOE_PRESS_RANGE = (-30.0, 15.0)        # mm
+# Compresión máxima del pulpejo al apretar el dedo: más allá, el dedo se flexiona en las
+# articulaciones interfalángicas en vez de aplastar el pulpejo contra el hueso.
+TOE_MAX_STRAIN = 0.59
+
+
+def _toe_base(ff: FootField, w: float, tp: float, tr: float, pivot: np.ndarray):
+    """Aproximación (mm) de cada celda de los dedos asentados, antes del apoyo, y sus constantes."""
+    T = ff.toes
+    ci = T.cells
+    lift = tp * (ff.local[..., 1][ci] - pivot[1]) + tr * (ff.local[..., 0][ci] - pivot[0])
+    h0, arm = T.settled()
+    return w - h0 + lift, arm, ff.thick[ci], ff.e0[ci], ff.beta[ci]
+
+
+def _toe_group_moments(ff: FootField, w, tp, tr, pivot, press, a_cell, per_toe: bool = False):
+    T = ff.toes
+    base, arm, th_c, e0, be = _toe_base(ff, w, tp, tr, pivot)
+    p = _law(np.maximum(base + T.press_cells(press), 0.0) / th_c, e0, be)
+    m = ((p[:, None] * arm) * T.weight).sum(axis=0) * a_cell
+    if per_toe:
+        return m
+    return np.array([m[TOE_GROUPS[0]].sum(), m[TOE_GROUPS[1]].sum()])
+
+
+def _solve_toes(ff: FootField, w: float, tp: float, tr: float, pivot: np.ndarray, torque: np.ndarray,
+                a_cell: float) -> np.ndarray:
+    """Apoyo de los dedos para el equilibrio de momentos alrededor de sus ejes MTF.
+
+    Cada dedo ya está asentado (girado en su MTF hasta tocar el suelo). Bajo carga, el momento
+    flexor lo aprieta contra el suelo: las articulaciones interfalángicas y el pulpejo blando hacen
+    que el dedo se aplaste sobre el suelo en vez de clavar la punta, así que el apoyo se modela como
+    un desplazamiento hacia el suelo del dedo asentado. Dos grupos musculares: el hallux (flexor
+    largo del hallux) y los dedos 2.º–5.º (flexores largo y corto de los dedos y fascia plantar). El
+    desplazamiento de cada grupo hace que el momento de la reacción del suelo bajo el grupo iguale
+    su momento flexor; el reparto entre los dedos del grupo resulta de su geometría.
+    """
+    T = ff.toes
+    tq = np.array([torque[TOE_GROUPS[0]].sum(), torque[TOE_GROUPS[1]].sum()])
+    has = np.array([(T.present & T.reach & g).any() for g in TOE_GROUPS]) & (tq > 0)
+    lo, hi = TOE_PRESS_RANGE
+    press = np.where(has, 0.0, lo)
+    base, arm, th_c, e0, be = _toe_base(ff, w, tp, tr, pivot)
+    wh = T.weight[:, 0]
+    aw = arm * T.weight
+    garm = (aw[:, TOE_GROUPS[0]].sum(axis=1) * a_cell, aw[:, TOE_GROUPS[1]].sum(axis=1) * a_cell)
+    # solo las celdas con peso en el grupo cuentan para su momento
+    for _ in range(4):                    # Gauss-Seidel: el hallux y el 2.º dedo comparten piel
+        prev = press.copy()
+        for g in (0, 1):
+            if not has[g]:
+                continue
+            other = press[1 - g] * ((1.0 - wh) if g == 0 else wh)
+            mine = wh if g == 0 else (1.0 - wh)
+            sel = garm[g] != 0
+            b0 = base[sel] + other[sel]
+            mg, ag, tg, eg, bg = mine[sel], garm[g][sel], th_c[sel], e0[sel], be[sel]
+
+            def f(x):
+                return float((_law(np.maximum(b0 + mg * x, 0.0) / tg, eg, bg) * ag).sum()) - tq[g]
+            own = mg >= 0.5
+            hi_g = min(hi, float(np.min((TOE_MAX_STRAIN * tg[own] - b0[own]) / mg[own]))) if own.any() else hi
+            hi_g = max(hi_g, lo)
+            fl, fh = f(lo), f(hi_g)
+            if fh <= 0:
+                press[g] = hi_g
+            elif fl >= 0:
+                press[g] = lo
+            else:
+                press[g] = brentq(f, lo, hi_g, xtol=1e-5)
+        if np.abs(press - prev).max() < 1e-4:
+            break
+    return press
+
+
+def _toe_moments(ff: FootField, w, tp, tr, pivot, press, a_cell) -> np.ndarray:
+    """Momento (N·mm) de la reacción del suelo bajo cada dedo respecto a su eje MTF (sin reparto lateral)."""
+    return _toe_group_moments(ff, w, tp, tr, pivot, press, a_cell, per_toe=True)
+
+
+def _pressure(ff: FootField, w: float, tp: float, tr: float, pivot: np.ndarray, spread_px: float,
+              toe_torque: np.ndarray | None = None, arch_drop: float = 0.0, a_cell: float = 1e-3,
+              return_press: bool = False):
+    """Presión para una configuración del pie.
+
+    * ``w``: aproximación vertical del pie; ``tp`` (cabeceo) baja la parte anterior y ``tr``
+      (alabeo) el lado +X local, alrededor de ``pivot`` (línea de carga, coords. locales).
+    * ``toe_torque``: momento flexor (N·mm) de cada dedo; el apoyo de cada grupo de dedos se resuelve
+      para el equilibrio de momentos alrededor de los ejes MTF. Sin él, los dedos quedan asentados.
+    * ``arch_drop``: descenso del arco (mm); el esqueleto no atraviesa el suelo: el descenso local
+      se limita a la holgura que queda hasta tocarlo: el arco baja hasta apoyar, y la compresión
+      posterior del tejido la produce la carga, no el descenso.
+    """
+    h = _base_height(ff, arch_drop)
+    if ff.toes.active:
+        press = np.zeros(2) if toe_torque is None else _solve_toes(ff, w, tp, tr, pivot, toe_torque, a_cell)
+        h = ff.toes.field(h, press)
+    else:
+        press = np.zeros(2)
     if tp or tr:
         h = h - tp * (ff.local[..., 1] - pivot[1]) - tr * (ff.local[..., 0] - pivot[0])
-    h = h - (ff.toe_rest_map + toe_angle) * ff.toe_lever
     delta = np.where(ff.mask, np.maximum(w - h, 0.0), 0.0)
     p = _law(delta / ff.thick, ff.e0, ff.beta)
     if spread_px > 0:
         p = ndimage.gaussian_filter(p, spread_px, mode="constant")
-    return np.where(ff.mask, p, 0.0)
+    p = np.where(ff.mask, p, 0.0)
+    return (p, press) if return_press else p
 
 
 def _moments(p: np.ndarray, grid: Grid):
@@ -563,69 +874,75 @@ def _midline_point(ff: FootField, L: float, frac: float) -> np.ndarray:
 
 
 def _solve_foot(ff: FootField, grid: Grid, target_F: float, target_cop: np.ndarray, spread_px: float,
-                side: str, toe_k: float, arch_drop: float, toe_flex: float = 0.0) -> dict:
-    """Equilibrio de un pie: segmento principal rígido + dedos articulados + arco que desciende.
+                side: str, arch_drop: float, toe_flex: float = 0.0) -> dict:
+    """Equilibrio de un pie: segmento principal rígido + cinco dedos articulados + arco que desciende.
 
-    Incógnitas: aproximación w, cabeceo, alabeo y giro de los dedos. Ecuaciones: fuerza total,
-    los dos momentos que sitúan el centro de presiones en la línea de carga, y el equilibrio de
-    momentos del segmento de los dedos alrededor del eje MTF: el momento de la reacción del
-    suelo bajo los dedos = tono de los flexores + rigidez pasiva × giro respecto a su posición de
-    reposo apoyada.
+    Incógnitas: aproximación w, cabeceo, alabeo y el giro de cada dedo. Ecuaciones: fuerza total,
+    los dos momentos que sitúan el centro de presiones en la línea de carga y, para cada dedo, el
+    equilibrio de momentos alrededor de su eje MTF (reacción del suelo bajo el dedo = momento
+    flexor que le corresponde). Los giros de los dedos se resuelven dentro de cada evaluación.
     """
     a_cell = grid.res ** 2 * 1e-3
     hmin = float(np.min(ff.h[ff.mask]))
     pivot = target_cop
-    has_toes = bool((ff.toe_lever > 0).any()) and toe_k > 0
+    # Sin momento flexor (toe_flex = 0) los dedos quedan libres: el suelo los levanta hasta que
+    # dejan de cargar. Con él, cada grupo aprieta hasta equilibrarlo.
+    torque = np.where(ff.toes.present, TOE_TORQUE_SHARE * max(toe_flex, 0.0), 0.0) if ff.toes.active else None
 
-    def press(w, tp, tr, ta):
-        return _pressure(ff, w, tp, tr, pivot, spread_px, ta, arch_drop)
+    def press(w, tp, tr, with_toes=False):
+        return _pressure(ff, w, tp, tr, pivot, spread_px, torque, arch_drop, a_cell, with_toes)
 
-    def F_of(w, tp, tr, ta):
-        return press(w, tp, tr, ta).sum() * a_cell
+    def F_of(w, tp, tr):
+        return press(w, tp, tr).sum() * a_cell
 
-    def w_for(tp, tr, ta, F):
-        lo_w = hmin - 300.0 * (abs(tp) + abs(tr) + abs(ta)) - arch_drop - 1.0
-        while F_of(lo_w, tp, tr, ta) > 0:
+    def w_for(tp, tr, F):
+        lo_w = hmin - 300.0 * (abs(tp) + abs(tr)) - arch_drop - 1.0
+        while F_of(lo_w, tp, tr) > 0:
             lo_w -= 5.0
+            if hmin - lo_w > 400:
+                raise BilateralError(f"Pie {side}: no se alcanza el equilibrio de fuerzas (dedos).")
         hi_w = hmin + 1.0
-        while F_of(hi_w, tp, tr, ta) < F:
+        while F_of(hi_w, tp, tr) < F:
             hi_w += max(1.0, hi_w - lo_w)
             if hi_w - hmin > 300:
                 raise BilateralError(f"Pie {side}: no se alcanza el equilibrio de fuerzas.")
-        return brentq(lambda w: F_of(w, tp, tr, ta) - F, lo_w, hi_w, xtol=1e-8, rtol=1e-12)
-
-    def toe_moment(p):
-        return float((p * ff.toe_lever).sum() * a_cell)            # N·mm
+        return brentq(lambda w: F_of(w, tp, tr) - F, lo_w, hi_w, xtol=1e-8, rtol=1e-12)
 
     def resid(x):
-        tp, tr = x[0], x[1]
-        ta = x[2] if has_toes else 0.0
-        w = w_for(tp, tr, ta, target_F)
-        p = press(w, tp, tr, ta)
-        _, c = _local_cop(ff, p)
-        r = list((c - target_cop) / 5.0)
-        if has_toes:
-            r.append((toe_moment(p) - toe_flex + toe_k * ta) / (0.02 * target_F * 50.0))
-        return np.array(r)
+        tp, tr = x
+        w = w_for(tp, tr, target_F)
+        _, c = _local_cop(ff, press(w, tp, tr))
+        return (c - target_cop) / 5.0
 
-    x0 = np.zeros(3) if has_toes else np.zeros(2)
-    lo = [-0.35, -0.35] + ([-0.6] if has_toes else [])
-    hi = [0.35, 0.35] + ([0.3] if has_toes else [])
-    sol = least_squares(resid, x0, x_scale=np.full(len(x0), 0.02), bounds=(lo, hi),
+    sol = least_squares(resid, np.zeros(2), x_scale=np.full(2, 0.02), bounds=([-0.35, -0.35], [0.35, 0.35]),
                         xtol=1e-12, ftol=1e-12, gtol=1e-12, max_nfev=300, diff_step=1e-4)
-    tp, tr = sol.x[0], sol.x[1]
-    ta = float(sol.x[2]) if has_toes else 0.0
-    w = w_for(tp, tr, ta, target_F)
-    p = press(w, tp, tr, ta)
+    tp, tr = float(sol.x[0]), float(sol.x[1])
+    w = w_for(tp, tr, target_F)
+    p, toe_press = press(w, tp, tr, True)
     F, c = _local_cop(ff, p)
     err = float(np.linalg.norm(c - target_cop))
     if err > 1.0:
         raise BilateralError(
             f"Pie {side}: no existe equilibrio de momentos con la línea de carga indicada (el centro de "
             f"presiones queda a {err:.1f} mm). Acérquela al centro de la huella.")
-    toe_eq = (toe_moment(p) - toe_flex + toe_k * ta) if has_toes else 0.0
-    return {"w": w, "pitch": float(tp), "roll": float(tr), "toe_angle": ta, "p": p, "pivot": pivot,
-            "cop_error_mm": err, "toe_moment_Nmm": toe_moment(p), "toe_equilibrium_error_Nmm": float(toe_eq),
+    toe_m = _toe_moments(ff, w, tp, tr, pivot, toe_press, a_cell) if ff.toes.active else np.zeros(5)
+    req = torque if torque is not None else np.zeros(5)
+    floating = ff.toes.present & ~ff.toes.reach
+    toe_eq = np.zeros(2)
+    capped = np.zeros(2, bool)
+    if ff.toes.active:
+        base, _, th_c, _, _ = _toe_base(ff, w, tp, tr, pivot)
+        strain = (base + ff.toes.press_cells(toe_press)) / th_c
+        wh = ff.toes.weight[:, 0]
+        for k, own in enumerate((wh >= 0.5, wh < 0.5)):
+            capped[k] = bool(own.any() and strain[own].max() >= TOE_MAX_STRAIN - 1e-6)
+    for k, g in enumerate(TOE_GROUPS):
+        if (ff.toes.present & ff.toes.reach & g).any() and not capped[k]:
+            toe_eq[k] = toe_m[g].sum() - req[g].sum()
+    return {"w": w, "pitch": tp, "roll": tr, "press": toe_press, "p": p, "pivot": pivot,
+            "cop_error_mm": err, "toe_moments_Nmm": toe_m, "toe_torque_Nmm": req,
+            "toe_equilibrium_error_Nmm": float(np.abs(toe_eq).max()), "toe_floating": floating,
+            "toe_capped": capped,
             "arch_drop": arch_drop}
 
 
@@ -638,7 +955,7 @@ def simulate(feet: dict[str, FootGeometry], placements: dict[str, Placement], sp
     lo = np.minimum(meshes["izquierdo"].bounds[0], meshes["derecho"].bounds[0])[:2] - 10
     hi = np.maximum(meshes["izquierdo"].bounds[1], meshes["derecho"].bounds[1])[:2] + 10
     grid = make_grid(lo, hi, sp.resolution)
-    fields = {s: build_field(feet[s], placements[s], grid, sp.tissue_for(s)) for s in SIDES}
+    fields = {s: build_field(feet[s], placements[s], grid, sp.tissue_for(s), sp.toe_max_flexion) for s in SIDES}
     spread_px = sp.spread / grid.res
     warnings: list[str] = []
     L = {sd: feet[sd].length for sd in SIDES}
@@ -683,8 +1000,8 @@ def simulate(feet: dict[str, FootGeometry], placements: dict[str, Placement], sp
     # descenso del arco proporcional a la carga del pie (la caída del navicular se mide con medio peso por pie)
     drops = {sd: (0.0 if sp.loaded_scan else sp.arch_drop * targets[sd] / (0.5 * W)) for sd in SIDES}
     flex = {sd: sp.toe_flexor * targets[sd] / (0.5 * W) for sd in SIDES}
-    sols = {sd: _solve_foot(fields[sd], grid, targets[sd], cops[sd], spread_px, sd, sp.toe_stiffness, drops[sd],
-                            flex[sd]) for sd in SIDES}
+    sols = {sd: _solve_foot(fields[sd], grid, targets[sd], cops[sd], spread_px, sd, drops[sd], flex[sd])
+            for sd in SIDES}
     P = {sd: sols[sd]["p"] for sd in SIDES}
     result = _report(feet, placements, fields, P, sols, grid, sp, W, frac, com_used, warnings)
     result["_arrays"] = {"grid": grid, "pressure": P, "fields": fields}
@@ -715,35 +1032,60 @@ def _foot_report(foot: FootGeometry, ff: FootField, p: np.ndarray, sol: dict, gr
         })
     # índice del arco (Cavanagh y Rodgers): área del mediopié / área de la huella sin dedos
     sn = ff.local[..., 1] / foot.length
-    no_toes = contact & (sn < ff.toe_line)
+    toes = ff.toe_mask if ff.toes.active else (sn >= ff.toe_line)
+    no_toes = contact & ~toes
+    tl = float(np.max(sn[no_toes])) if no_toes.any() else ff.toe_line
+    s0 = float(np.min(sn[no_toes])) if no_toes.any() else 0.0
+    d3 = (tl - s0) / 3.0
     third = [(no_toes & (sn >= lo) & (sn < hi)).sum() for lo, hi in
-             ((-1, ff.toe_line / 3), (ff.toe_line / 3, 2 * ff.toe_line / 3), (2 * ff.toe_line / 3, 2))]
+             ((-1, s0 + d3), (s0 + d3, s0 + 2 * d3), (s0 + 2 * d3, 2))]
     arch_index = float(third[1] / max(sum(third), 1))
-    h_eff = ff.h
-    if sol["arch_drop"]:
-        h_eff = h_eff - np.minimum(sol["arch_drop"] * ff.arch_shape, np.maximum(np.where(ff.mask, ff.h, 0.0), 0.0))
+    # altura efectiva bajo carga (arco, dedos girados, cabeceo y alabeo) para la compresión del tejido
+    h_eff = ff.toes.field(_base_height(ff, sol["arch_drop"]), sol["press"])
     h_eff = (h_eff - sol["pitch"] * (ff.local[..., 1] - sol["pivot"][1])
-             - sol["roll"] * (ff.local[..., 0] - sol["pivot"][0]) - (ff.toe_rest_map + sol["toe_angle"]) * ff.toe_lever)
+             - sol["roll"] * (ff.local[..., 0] - sol["pivot"][0]))
     eps = np.where(ff.mask, np.maximum(w - h_eff, 0.0) / ff.thick, 0.0)
-    toes = ff.toe_lever > 0
     toe_contact = float((contact & toes).sum() * a_cell) / 100.0
     # Asentamiento por gravedad (antes de cargar): zonas que tocan el suelo con el pie apoyado
-    # y los dedos asentados, sin compresión del tejido.
-    h_settle = ff.h - ff.toe_rest_map * ff.toe_lever
+    # y cada dedo girado hasta apoyar su pulpejo, sin compresión del tejido.
+    h_settle = np.where(ff.mask, ff.toes.field(np.where(ff.mask, ff.h, 0.0), np.zeros(2)), np.inf)
     touch = ff.mask & (h_settle <= 0.5)
     initial = [REGION_NAMES[k] for i, k in enumerate(REGION_KEYS) if (touch & (ff.region == i)).sum() * a_cell >= 4.0]
+    T = ff.toes
+    toe_list = []
+    if T.active:
+        for i in range(5):
+            c = T.cell_toe == i
+            if not c.any():
+                continue
+            Fi = float(p[c].sum() * a_cell * 1e-3)
+            toe_list.append({
+                "index": i + 1, "name": TOE_NAMES[i], "force_N": Fi, "pct_foot": 100.0 * Fi / F if F > 0 else 0.0,
+                "contact_area_cm2": float((c & contact).sum() * a_cell) / 100.0,
+                "peak_kPa": float(p[c].max()), "touches": bool((c & contact).any()),
+                "reaches_ground": bool(T.reach[i]),
+                "rest_deg": float(np.degrees(T.rest[i])),
+                "press_mm": float(sol["press"][0 if i == 0 else 1]),
+                "flexor_moment_Nmm": float(sol["toe_torque_Nmm"][i]),
+                "ground_moment_Nmm": float(sol["toe_moments_Nmm"][i]),
+                "mtp_axis_pct": float(100.0 * T.axis_y[i] / foot.length), "max_strain_pct": float(100.0 * eps[c].max()),
+            })
+    rests = [t["rest_deg"] for t in toe_list]
     return {
         "side": foot.declared_side, "force_N": F, "pct_body": 100.0 * F / W,
         "contact_area_cm2": area, "mean_kPa": float(F / (area * 1e-4) / 1e3) if area > 0 else 0.0,
         "peak_kPa": float(p.max()), "cop_world_mm": cop.tolist(),
         "cop_local_mm": cop_local.tolist(), "cop_from_heel_pct": float(100.0 * cop_local[1] / foot.length),
         "max_compression_mm": float((eps * ff.thick).max()), "max_tissue_strain_pct": float(100.0 * eps.max()),
+        "region_strain_pct": {k: float(100.0 * eps[ff.region == i].max()) if (ff.region == i).any() else 0.0
+                              for i, k in enumerate(REGION_KEYS)},
         "pitch_deg": float(np.degrees(sol["pitch"])),
-        "toe_rest_deg": float(np.degrees(ff.toe_rest)),
+        "toe_rest_deg": float(np.mean(rests)) if rests else 0.0,
         "initial_support_regions": initial,
-        "toe_angle_deg": float(np.degrees(sol["toe_angle"])),
-        "toe_lift_under_load_deg": float(np.degrees(-sol["toe_angle"])),
+        "toe_press_mm": [float(v) for v in sol["press"]],
         "toe_contact_area_cm2": toe_contact,
+        "toes_in_contact": int(sum(t["touches"] for t in toe_list)),
+        "toes": toe_list, "toes_detected_by_geometry": int(T.detected) if T.active else 0,
         "toe_equilibrium_error_Nmm": float(sol["toe_equilibrium_error_Nmm"]),
         "toes_pct": float(sum(r["pct_foot"] for r in regions if r["key"] in ("hallux", "dedos"))),
         "midfoot_pct": float(sum(r["pct_foot"] for r in regions if r["key"] == "mediopie")),
@@ -772,6 +1114,23 @@ def _report(feet, placements, fields, P, sols, grid, sp, W, frac, com, warnings)
     cop = [mx / Ft, my / Ft]
     area = per["izquierdo"]["contact_area_cm2"] + per["derecho"]["contact_area_cm2"]
     for s in SIDES:
+        for t in per[s]["toes"]:
+            if not t["reaches_ground"]:
+                warnings.append(f"Pie {s}: el {t['name'].lower()} no llega al suelo ni girando "
+                                f"{sp.toe_max_flexion:.0f}° desde la postura del escaneo (dedo muy levantado o en "
+                                "garra): queda sin apoyo.")
+            elif not t["touches"]:
+                warnings.append(f"Pie {s}: el {t['name'].lower()} apenas carga (por debajo del umbral de contacto).")
+        for name, g in (("el hallux", 0), ("los dedos 2.º–5.º", 1)):
+            sol = sols[s]
+            req = float(sol["toe_torque_Nmm"][TOE_GROUPS[g]].sum())
+            got = float(sol["toe_moments_Nmm"][TOE_GROUPS[g]].sum())
+            if req > 0 and got < 0.9 * req and (fields[s].toes.present & fields[s].toes.reach & TOE_GROUPS[g]).any():
+                warnings.append(f"Pie {s}: {name} solo apoya con el {100 * got / req:.0f} % del momento flexor previsto: "
+                                "su superficie de apoyo en el escaneo es pequeña (¿dedo poco capturado o en garra?).")
+        if per[s]["toes"] and max(t["rest_deg"] for t in per[s]["toes"]) > 30:
+            warnings.append(f"Pie {s}: algún dedo ha tenido que girar más de 30° para apoyar: en el escaneo los "
+                            "dedos estaban muy levantados. Compruebe que no se trata de dedos en garra.")
         if per[s]["max_tissue_strain_pct"] > 60:
             warnings.append(f"Pie {s}: compresión máxima del tejido del {per[s]['max_tissue_strain_pct']:.0f} %; "
                             "fuera del rango en que el modelo es fiable (revise peso y propiedades).")
