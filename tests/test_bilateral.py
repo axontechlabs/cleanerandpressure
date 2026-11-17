@@ -85,6 +85,82 @@ def test_toes_settle_and_carry_light_load(session):
     assert no_tone["feet"]["izquierdo"]["toes_pct"] < r["feet"]["izquierdo"]["toes_pct"]
 
 
+@pytest.fixture(scope="module")
+def lifted_session():
+    """Escaneos sin carga típicos: dedos en extensión (12°) con pulpejos y surcos interdigitales."""
+    left, right = S.make_foot_pair(ns=160, nt=80, toe_flatten=1.0, toe_lift=12.0, toe_pads=True)
+    s = BilateralSession()
+    s.load("izquierdo", stl_bytes(left), "izq.stl")
+    s.load("derecho", stl_bytes(right), "der.stl")
+    assert all(s.process()[x]["valid"] for x in SIDES)
+    return s
+
+
+def test_all_five_toes_touch_and_carry_load(lifted_session):
+    """Aunque el escaneo tenga los dedos levantados, en bipedestación los cinco apoyan y cargan."""
+    r = lifted_session.simulate({"mass": 70.0})
+    for x in SIDES:
+        f = r["feet"][x]
+        assert f["toes_in_contact"] == 5
+        assert len(f["toes"]) == 5
+        heel_peak = max(q["peak_kPa"] for q in f["regions"] if q["key"].startswith("talon"))
+        for t in f["toes"]:
+            assert t["reaches_ground"] and t["touches"]
+            assert t["force_N"] > 0.3                              # cada dedo lleva algo de carga
+            assert 5.0 < t["rest_deg"] < 30.0                      # tuvieron que girar para apoyar
+            assert t["peak_kPa"] < 0.6 * heel_peak                 # carga ligera frente al talón
+        hallux = f["toes"][0]
+        assert hallux["force_N"] == max(t["force_N"] for t in f["toes"])
+        assert 3.0 < f["toes_pct"] < 10.0                          # dedos: pocos % del pie
+        assert f["toe_contact_area_cm2"] > 8.0
+        # equilibrio de momentos de cada grupo de dedos alrededor de los ejes MTF
+        for g in (slice(0, 1), slice(1, 5)):
+            req = sum(t["flexor_moment_Nmm"] for t in f["toes"][g])
+            got = sum(t["ground_moment_Nmm"] for t in f["toes"][g])
+            assert got == pytest.approx(req, rel=0.01)
+        # el resto del reparto sigue siendo el de bipedestación
+        assert 50.0 < f["rearfoot_pct"] < 72.0 and 18.0 < f["forefoot_pct"] < 40.0
+    assert not [w for w in r["warnings"] if "dedo" in w or "hallux" in w]
+
+
+def test_tissue_compression_matches_literature(lifted_session):
+    """Compresión del tejido en bipedestación dentro de lo medido (almohadilla del talón ~47 %)."""
+    r = lifted_session.simulate({"mass": 70.0})
+    for x in SIDES:
+        st = r["feet"][x]["region_strain_pct"]
+        for k in ("talon_medial", "talon_lateral"):
+            assert 35.0 < st[k] < 56.0          # índice de compresibilidad 0,53 ± 0,09 (Prichasuk, 1994)
+        assert max(st.values()) < 60.0
+
+
+def test_toe_flexor_controls_toe_load(lifted_session):
+    base = lifted_session.simulate({"mass": 70.0})
+    strong = lifted_session.simulate({"mass": 70.0, "toe_flexor": 1200.0})
+    none = lifted_session.simulate({"mass": 70.0, "toe_flexor": 0.0})
+    for x in SIDES:
+        assert strong["feet"][x]["toes_pct"] > base["feet"][x]["toes_pct"] > none["feet"][x]["toes_pct"]
+        assert none["feet"][x]["toes_pct"] < 0.5                   # sin momento flexor los dedos no cargan
+        assert abs(none["global"]["force_error_N"]) < 1e-6 * none["global"]["weight_N"]
+
+
+def test_strongly_lifted_toes_still_touch():
+    left, right = S.make_foot_pair(ns=160, nt=80, toe_flatten=1.0, toe_lift=30.0, toe_pads=True)
+    s = BilateralSession()
+    s.load("izquierdo", stl_bytes(left), "izq.stl")
+    s.load("derecho", stl_bytes(right), "der.stl")
+    s.process()
+    r = s.simulate({"mass": 70.0})
+    for x in SIDES:
+        assert r["feet"][x]["toes_in_contact"] == 5
+        assert r["feet"][x]["toe_rest_deg"] > 20.0
+    assert any("más de 30°" in w for w in r["warnings"])
+    # con un rango articular menor que el necesario, los dedos quedan sin apoyo y se avisa
+    r = s.simulate({"mass": 70.0, "toe_max_flexion": 10.0})
+    for x in SIDES:
+        assert r["feet"][x]["toes_in_contact"] < 5
+    assert any("no llega al suelo" in w for w in r["warnings"])
+
+
 def test_reference_load_distribution(session):
     """Reparto clásico en bipedestación: el talón lleva la mayor parte y el mediopié poca."""
     r = session.simulate({"mass": 70.0})

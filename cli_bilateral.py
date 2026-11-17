@@ -33,7 +33,7 @@ def main(argv=None) -> int:
                     help="proyección del centro de masas: mm a la derecha del punto medio y %% de la longitud del pie")
     ap.add_argument("--separacion", type=float, default=170.0, help="mm entre centros de talón")
     ap.add_argument("--apertura", type=float, nargs=2, default=(7.0, 7.0), metavar=("IZQ", "DER"))
-    ap.add_argument("--linea-carga", type=float, default=38.0, help="%% de la longitud desde el talón")
+    ap.add_argument("--linea-carga", type=float, default=32.0, help="%% de la longitud desde el talón")
     ap.add_argument("--config", help="JSON con {'limpieza':{}, 'postura':{}, 'simulacion':{}}")
     a = ap.parse_args(argv)
     cfg = json.loads(Path(a.config).read_text()) if a.config else {}

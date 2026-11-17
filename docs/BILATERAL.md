@@ -57,12 +57,32 @@ El pie se modela con varios segmentos y se carga en este orden, como ocurre al p
    sobre el suelo y queda apoyado en el plano de su envolvente convexa que contiene esa línea
    (normalmente talón y cabezas metatarsianas). El informe indica qué regiones tocan el suelo en
    este momento, antes de comprimir el tejido.
-2. **Dedos.** Cada dedo tiene su propia articulación metatarsofalángica (MTF). Por franjas
-   mediolaterales de ~9 mm, cada dedo gira hacia el suelo hasta apoyar, dentro del rango de flexión
-   plantar (35°). En un escaneo sin carga los dedos suelen quedar algo levantados; así apoyan como en
-   bipedestación real, con contacto ligero. Bajo carga, el segmento de los dedos está en equilibrio de
-   momentos: la reacción del suelo bajo los dedos equilibra el tono de los flexores (400 N·mm por pie
-   con medio peso) más la rigidez pasiva de la articulación (4000 N·mm/rad).
+2. **Dedos.** En un escaneo sin carga los dedos suelen quedar algo levantados (en extensión), pero
+   en bipedestación normalmente apoyan los cinco y llevan algo de carga. El modelo lo reproduce así:
+   - **Localización.** Por franjas mediolaterales de 4 mm se busca la almohadilla de las cabezas
+     metatarsianas y, delante, el surco digital (o, si los dedos están levantados, el punto donde el
+     perfil deja de estar apoyado). Con eso se ajusta el eje de las articulaciones
+     metatarsofalángicas (MTF) como una parábola (la 1.ª MTF más adelantada que la 5.ª). Los dedos
+     empiezan en el surco, unos 17 mm (7 % de la longitud) por delante del eje.
+   - **Cinco dedos.** La fila de los dedos se divide en cinco con las proporciones anatómicas
+     (hallux ≈ 31 % de la anchura). Cada límite se ajusta al hueco interdigital más cercano que
+     muestre la geometría. Donde no hay hueco visible, la transición entre dedos vecinos es suave
+     (piel continua).
+   - **Asentamiento.** Cada dedo es un segmento rígido que gira en su articulación MTF (eje a 20 mm
+     sobre la piel: unos 10 mm de tejido más el radio de la cabeza metatarsiana) hasta que su pulpejo
+     toca el suelo. El giro máximo es de 50° desde la postura del escaneo. Si un dedo necesita más,
+     no apoya y se avisa (dedo en garra o muy levantado). Si alguno necesita más de 30°, también se
+     avisa.
+   - **Carga.** Bajo carga, los dedos se aprietan contra el suelo con un momento flexor alrededor de
+     las MTF: tono de los flexores más el mecanismo de molinete inverso de la fascia plantar, que
+     flexiona los dedos al cargar el arco. Por defecto son 700 N·mm por pie con medio peso,
+     proporcional a la carga del pie. Hay dos grupos musculares: el hallux (flexor largo del hallux,
+     40 %) y los dedos 2.º–5.º (flexores largo y corto de los dedos y fascia, 60 %). El apoyo de cada
+     grupo se resuelve para que el momento de la reacción del suelo iguale el momento flexor. El
+     reparto entre los dedos de un grupo sale de su geometría. El dedo no clava la punta: sus
+     articulaciones interfalángicas y el pulpejo blando hacen que se aplaste contra el suelo, y el
+     pulpejo no se comprime más del 59 % (más allá, el dedo se flexionaría). Si por eso un grupo no
+     alcanza el 90 % de su momento, se avisa.
 3. **Arco interno.** El arco longitudinal interno desciende con la carga. La caída del navicular
    en adultos sanos es de unos 3,6–8,1 mm de media; por defecto se usan 6 mm con medio peso por pie,
    proporcional a la carga. El descenso es máximo bajo el navicular y nulo en la columna lateral
@@ -89,6 +109,23 @@ Valores por defecto (editables por región y por pie):
 | Antepié 4.º–5.º MTT | 9 | 35 | 6 |
 | Hallux | 8 | 30 | 6 |
 | Dedos 2.º–5.º | 7 | 30 | 6 |
+
+**Cuánto se deforma el tejido.** La simulación se ha comprobado frente a medidas de compresión del
+tejido plantar:
+
+- **Talón.** El índice de compresibilidad de la almohadilla del talón (espesor cargado / sin
+  cargar) es 0,53 ± 0,09 en 400 personas sanas (Prichasuk, 1994) y 0,53 en adultos jóvenes (Hsu et
+  al., 1998). Es decir, el talón se comprime un ~47 % bajo el peso. El modelo da un 46–47 %.
+- **Antepié.** Bajo la 2.ª cabeza metatarsiana el tejido se comprime de media un 46 % en el momento
+  de mayor carga de la marcha (Cavanagh, 1999), con presiones muy superiores a las de estar de pie.
+  El modelo da un 46–49 % en bipedestación, en el límite blando del rango.
+- **Conclusión.** El tejido no estaba demasiado rígido. Ablandarlo más contradiría esas medidas. Lo
+  que faltaba era la deformación articular: los dedos giran en sus MTF hasta apoyar y se aprietan
+  contra el suelo.
+- **Presiones de los dedos.** En bipedestación, la presión bajo el hallux y el 2.º dedo es de
+  alrededor del 20 % de la presión máxima del pie, y bajo los dedos 3.º–5.º de alrededor del 15 %
+  (Gawronska y Lorkowski, 2021). Con los valores por defecto los dedos llevan en torno al 5–7 % de
+  la carga del pie, con picos del 20–30 % del máximo.
 
 - **Espesores:** siguen las medidas ecográficas publicadas (almohadilla del talón ~19–20 mm; bajo las
   cabezas metatarsianas ~7–15 mm según el estudio).
@@ -177,8 +214,16 @@ su propia orientación aleatoria. Se comprueba:
 - la detección del lado y el aviso si los archivos están cruzados;
 - el equilibrio exacto de fuerzas con repartos 50/50, 45/55 y 62/38;
 - el equilibrio de momentos de cada pie (centro de presiones a menos de 0,5 mm de la línea de carga);
-- que los dedos apoyan (más de 2 cm²) con carga ligera (menos del 10 %) y que sin tono flexor
+- que los dedos apoyan (más de 2 cm²) con carga ligera (menos del 10 %) y que sin momento flexor
   cargan menos;
+- con escaneos de dedos en extensión (12°) con pulpejos: que los cinco dedos apoyan y cargan, que
+  el hallux es el que más carga, que los dedos llevan el 3–10 % del pie y que se cumple el
+  equilibrio de momentos de cada grupo alrededor de las MTF (error < 1 %);
+- que la compresión del talón queda en el 35–56 % (índice de compresibilidad publicado) y la
+  máxima por debajo del 60 %;
+- que el momento flexor gobierna la carga de los dedos (sin él, no cargan);
+- con dedos muy levantados (30°): que siguen apoyando los cinco y se avisa; y que, si el giro
+  máximo permitido no basta, no apoyan y se avisa;
 - el reparto de referencia: talón 50–72 %, mediopié < 15 %, antepié 20–40 %, pico en el talón;
 - el descenso del arco y su desactivación para escaneos en carga;
 - rangos fisiológicos (pico entre 50 y 250 kPa, contacto entre 60 y 180 cm² por pie, retropié por
@@ -188,19 +233,19 @@ su propia orientación aleatoria. Se comprueba:
 - que no hay solapes y que los STL limpios no cambian al colocar los pies;
 - las exportaciones, que las propiedades de un pie no afectan al otro y la API web.
 
-Con su escaneo real (y su copia especular como segundo pie), 70 kg y 50/50:
+Con la pareja sintética de dedos en extensión (12°) con pulpejos, 70 kg y 50/50:
 
-| Indicador | Valor por pie |
-|---|---:|
-| Contacto | 115 cm², de ellos 13–16 cm² bajo los dedos |
-| Talón / mediopié / antepié / dedos | 50 / 28 / 19 / 3 % |
-| Pico en el talón / antepié / dedos | 183 / 85 / 25 kPa |
+| Indicador | Antes | Ahora |
+|---|---:|---:|
+| Dedos que apoyan | 0 | 5 |
+| Carga en los dedos (% del pie) | 0 % | 6,8 % (hallux 2,6 %) |
+| Contacto bajo los dedos | 0 cm² | 15 cm² |
+| Pico hallux / dedos 2.º–5.º | 5 / 5 kPa | 50 / 32 kPa |
+| Talón / mediopié / antepié | 58 / 9 / 33 % | 60 / 8 / 26 % |
+| Compresión del talón | 46 % | 46 % |
 
-Los cinco dedos apoyan con contacto ligero. El mediopié carga más que la media de Cavanagh porque
-el borde lateral de ese escaneo ya está prácticamente apoyado sin carga.
-
-Con la pareja sintética, el reparto es talón 62 %, mediopié 4–5 % y antepié 34 %, con contacto
-ligero de los dedos.
+Las cifras del escaneo real que figuraban aquí se obtuvieron con el modelo anterior y hay que
+recalcularlas.
 
 Son comprobaciones de verosimilitud frente a la literatura, no una validación.
 
@@ -213,11 +258,16 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
   típica, no se calcula a partir de la rigidez de cada pie. Un pie muy flexible o muy rígido necesita
   ajustarlo; se puede medir con la prueba de caída del navicular. Si el escaneo se hizo en carga,
   hay que desactivarlo.
-- **Dedos.** Se asientan por franjas de ~9 mm, no dedo a dedo identificado. El tono flexor es un
-  valor típico; en pies con dedos en garra o hallux limitus el resultado de los dedos es poco fiable.
+- **Dedos.** Los cinco dedos se separan por proporciones anatómicas ajustadas a los huecos
+  interdigitales visibles, no por segmentación de cada falange. El momento flexor (700 N·mm) está
+  calibrado para dar la carga ligera publicada, no medido en la persona. Las articulaciones
+  interfalángicas no se modelan por separado. En dedos en garra, en martillo o con hallux limitus,
+  el resultado de los dedos es poco fiable (se avisa cuando el giro necesario es grande). El "dedo
+  flotante" (algún dedo que no toca el suelo de pie) es frecuente en algunas poblaciones. Para
+  simularlo, baje el giro máximo o el momento flexor.
 - **Postura.** La separación y la apertura por defecto son la media de una población, no las de la
   persona.
-- **Línea de carga.** Su posición (38 %) es una hipótesis razonable para bipedestación tranquila, no
+- **Línea de carga.** Su posición (32 %) es una hipótesis razonable para bipedestación tranquila, no
   una medida; cambia el reparto talón/antepié.
 - **Regiones.** La máscara porcentual no localiza cada cabeza metatarsiana ni cada dedo
   individualmente.
@@ -233,7 +283,7 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
 - P. R. Cavanagh, M. M. Rodgers. *The arch index: a useful measure from footprints*. J. Biomech. 20
   (1987) 547–551.
 - P. R. Cavanagh. *Plantar soft tissue thickness during ground contact in walking*. J. Biomech. 32
-  (1999) 623–628.
+  (1999) 623–628: compresión media máxima del 45,7 % bajo la 2.ª cabeza metatarsiana.
 - J. C. Teoh, B. Lim, T. Lee. *Effect of deformation depth on plantar soft tissue behavior*. J. Foot
   Ankle Res. 7 (Suppl. 1) A84 (2014): umbral no lineal del 12 % (talón) y el 16 % (2.ª cabeza
   metatarsiana).
@@ -245,3 +295,16 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
   Orthop. Traumatol. Turc. (2019).
 - Valores de referencia de baropodometría estática en adultos jóvenes: Life 15 (2025) 1354,
   <https://doi.org/10.3390/life15091354>.
+- S. Prichasuk, P. Siriwongpairat, P. Mulpruek. *The heel-pad compressibility*. Clin. Orthop. Relat.
+  Res. 300 (1994) 197–200: espesor sin carga 18,7 ± 2,5 mm, índice de compresibilidad 0,53 ± 0,09
+  (400 personas).
+- T. C. Hsu et al. *Comparison of the mechanical properties of the heel pad between young and
+  elderly adults*. Arch. Phys. Med. Rehabil. (1998): índice de compresibilidad del 53 % en jóvenes y
+  del 61 % en mayores.
+- K. Gawronska, J. Lorkowski. *Evaluating the symmetry in plantar pressure distribution under the
+  toes during standing in a postural pedobarographic examination*. Symmetry 13 (2021) 1476: presión
+  bajo los dedos en bipedestación, en % de la máxima del pie.
+- J. H. Hicks. *The mechanics of the foot II: the plantar aponeurosis and the arch*. J. Anat. 88
+  (1954) 25–30: mecanismo de molinete de la fascia plantar.
+- T. Yanagiya et al. *Athletic event-specific characteristics in floating toes during the static
+  standing posture*. J. Phys. Ther. Sci. 32 (2020) 342–347: prevalencia del dedo flotante.

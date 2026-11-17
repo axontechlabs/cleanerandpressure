@@ -45,15 +45,47 @@ def _relief(xh, u, arch_depth: float = 16.0, midfoot_lift: float = 0.0):
     return -arch + toes - sulcus - lift
 
 
-def _surface(xh, u_signed, zfac, arch_depth: float = 16.0, midfoot_lift: float = 0.0, toe_flatten: float = 0.0):
+def _toe_extension(xh, u_signed, toe_lift_deg: float):
+    """Elevación (mm) de los dedos en extensión, como en un escaneo sin carga.
+
+    Los dedos giran hacia arriba alrededor de las articulaciones metatarsofalángicas, que siguen la
+    parábola metatarsiana: la 1.ª (medial, u > 0) más adelantada que la 5.ª (lateral).
+    """
+    if not toe_lift_deg:
+        return np.zeros_like(xh)
+    x_mtp = 0.715 + 0.035 * (np.clip(u_signed, -1, 1) + 1.0) / 2.0
+    d = (xh - x_mtp) * L_FOOT
+    r = 8.0                                         # transición suave en el surco (mm)
+    lever = np.where(d <= 0, 0.0, np.where(d < r, d * d / (2 * r), d - r / 2))
+    return np.tan(np.radians(toe_lift_deg)) * lever
+
+
+def _toe_pads(xh, u_signed):
+    """Pulpejos individuales (mm): cinco almohadillas convexas separadas por surcos interdigitales."""
+    out = np.zeros_like(xh)
+    for uc, half, xc in zip((0.62, 0.21, -0.12, -0.42, -0.72), (0.24, 0.14, 0.13, 0.13, 0.13),
+                            (0.925, 0.915, 0.90, 0.885, 0.865)):
+        out += 3.0 * np.exp(-((xh - xc) / 0.05) ** 4 - ((u_signed - uc) / half) ** 4)
+    zone = np.clip((xh - 0.80) / 0.04, 0.0, 1.0)
+    return zone * (out - 1.5)
+
+
+def _surface(xh, u_signed, zfac, arch_depth: float = 16.0, midfoot_lift: float = 0.0, toe_flatten: float = 0.0,
+             toe_lift: float = 0.0, toe_pads: bool = False):
     w = np.where(u_signed >= 0, _W_MED(xh), _W_LAT(xh)) * _taper(xh)
     x = xh * L_FOOT
     y = 6.0 * np.sin(np.pi * xh) + u_signed * w
     tp = _taper(xh)
+    if toe_pads:             # sección de los dedos plana (no de horma) con un pulpejo por dedo
+        r = np.clip((xh - 0.76) / 0.08, 0.0, 1.0)
+        uc = np.clip(np.abs(u_signed), 0, 1)
+        flat = np.where(zfac > 0, (1.0 - uc ** 10) ** 0.1, zfac)
+        zfac = zfac + (r * r * (3 - 2 * r)) * (flat - zfac)
     if toe_flatten:          # pulpejos de los dedos casi a la altura del antepié (sin punta curvada)
         r = np.clip((xh - 0.72) / 0.18, 0.0, 1.0)
         tp = tp + toe_flatten * (r * r * (3 - 2 * r)) * (1.0 - tp)
-    z = (H_WALL * tp + _relief(xh, u_signed, arch_depth, midfoot_lift)) * zfac
+    rel = _relief(xh, u_signed, arch_depth, midfoot_lift) + (_toe_pads(xh, u_signed) if toe_pads else 0.0)
+    z = (H_WALL * tp + rel - _toe_extension(xh, u_signed, toe_lift)) * zfac
     return x, y, z
 
 
@@ -72,7 +104,8 @@ def true_height(x, y):
 
 
 def base_scan(ns: int = 300, nt: int = 150, closed: bool = False, arch_depth: float = 16.0,
-              midfoot_lift: float = 0.0, toe_flatten: float = 0.0) -> Mesh:
+              midfoot_lift: float = 0.0, toe_flatten: float = 0.0, toe_lift: float = 0.0,
+              toe_pads: bool = False) -> Mesh:
     """Planta + paredes laterales (y empeine si ``closed``)."""
     s = np.linspace(0.004, 0.996, ns)
     xh = 0.5 * (1 - np.cos(np.pi * s)) * 0.992 + 0.004
@@ -89,7 +122,7 @@ def base_scan(ns: int = 300, nt: int = 150, closed: bool = False, arch_depth: fl
     ct, st = np.cos(tt), np.sin(tt)
     u = np.sign(ct) * np.abs(ct) ** (2.0 / N_SUPER)
     zf = np.sign(st) * np.abs(st) ** (2.0 / N_SUPER)
-    x, y, z = _surface(xx, u, np.maximum(zf, 0), arch_depth, midfoot_lift, toe_flatten)
+    x, y, z = _surface(xx, u, np.maximum(zf, 0), arch_depth, midfoot_lift, toe_flatten, toe_lift, toe_pads)
     if closed:
         z = np.where(zf < 0, zf * 45.0 * _taper(xx), z)
     v = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
@@ -304,15 +337,17 @@ def make_scenario(name: str, seed: int = 0, ns: int = 300, nt: int = 150) -> Sce
 
 def make_foot_pair(seed: int = 0, ns: int = 220, nt: int = 110, arch_left: float = 16.0,
                    arch_right: float = 22.0, sigma: float = 0.05, midfoot_lift: float = 9.0,
-                   toe_flatten: float = 0.8):
+                   toe_flatten: float = 0.8, toe_lift: float = 0.0, toe_pads: bool = False):
     """Pareja sintética de escaneos (izquierdo, derecho) con arcos distintos.
 
     El modelo base es un pie izquierdo (medial hacia +Y con X hacia los dedos y Z hacia el
     escáner); el derecho se obtiene por simetría especular y tiene otro arco, de modo que
     los dos pies no son copias simétricas. Cada uno lleva su propia posición y orientación.
+    ``toe_lift`` (grados) pone los dedos en extensión, como suelen quedar en un escaneo sin carga, y
+    ``toe_pads`` da a cada dedo su pulpejo, separado de los vecinos por un surco interdigital.
     """
     rng = np.random.default_rng(seed)
-    kw = dict(midfoot_lift=midfoot_lift, toe_flatten=toe_flatten)
+    kw = dict(midfoot_lift=midfoot_lift, toe_flatten=toe_flatten, toe_lift=toe_lift, toe_pads=toe_pads)
     left = add_noise(base_scan(ns, nt, arch_depth=arch_left, **kw), sigma, rng)
     right = add_noise(base_scan(ns, nt, arch_depth=arch_right, **kw), sigma, rng)
     right = Mesh(right.vertices * np.array([1.0, -1.0, 1.0]), right.faces[:, ::-1].copy())

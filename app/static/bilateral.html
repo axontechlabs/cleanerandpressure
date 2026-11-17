@@ -78,15 +78,15 @@
       <summary>Tejido plantar (avanzado)</summary>
       <div class="param"><span>Escaneo tomado en carga</span><input type="checkbox" id="loaded_scan"></div>
       <div class="param"><span>Descenso del arco interno</span><input type="number" id="arch_drop" value="6" step="0.5" min="0" max="20"><small>mm</small></div>
-      <div class="param"><span>Tono flexor de los dedos</span><input type="number" id="toe_flexor" value="400" step="50" min="0" max="5000"><small>N·mm</small></div>
-      <div class="param"><span>Rigidez de la articulación MTF</span><input type="number" id="toe_stiffness" value="4000" step="250" min="0" max="50000"><small>N·mm/rad</small></div>
+      <div class="param"><span>Momento flexor de los dedos</span><input type="number" id="toe_flexor" value="700" step="50" min="0" max="5000"><small>N·mm</small></div>
+      <div class="param"><span>Giro máximo de los dedos para apoyar</span><input type="number" id="toe_max_flexion" value="50" step="5" min="0" max="90"><small>°</small></div>
       <div class="param"><span>Factor de no linealidad β</span><input type="number" id="nonlinearity_scale" value="1" step="0.1" min="0.2" max="3"></div>
       <div class="param"><span>Reparto lateral del tejido</span><input type="number" id="spread" value="4" step="0.5" min="0" max="15"><small>mm</small></div>
       <div class="param"><span>Umbral de contacto</span><input type="number" id="contact_threshold" value="2" step="0.5" min="0" max="30"><small>kPa</small></div>
       <div class="param"><span>Rigidez relativa izq.</span><input type="number" id="stiff-izquierdo" value="1" step="0.05" min="0.1" max="10"></div>
       <div class="param"><span>Rigidez relativa der.</span><input type="number" id="stiff-derecho" value="1" step="0.05" min="0.1" max="10"></div>
       <table class="tissue" id="tissue"></table>
-      <div class="hint">Por región y por pie: espesor del tejido sin carga t (mm), módulo inicial E₀ (kPa) y no linealidad β. Presión = E₀/β · (e<sup>β·δ/t</sup> − 1). El descenso del arco se aplica con medio peso por pie y es proporcional a la carga; desactívelo si el escaneo se hizo de pie.</div>
+      <div class="hint">Por región y por pie: espesor del tejido sin carga t (mm), módulo inicial E₀ (kPa) y no linealidad β. Presión = E₀/β · (e<sup>β·δ/t</sup> − 1). El descenso del arco se aplica con medio peso por pie y es proporcional a la carga; desactívelo si el escaneo se hizo de pie. Cada dedo gira en su articulación MTF hasta apoyar y se aprieta contra el suelo con el momento flexor (flexores y fascia plantar; por pie con medio peso, proporcional a la carga): el hallux recibe el 40 % y los dedos 2.º–5.º el 60 %.</div>
     </details>
   </section>
 

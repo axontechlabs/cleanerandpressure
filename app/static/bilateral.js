@@ -83,7 +83,7 @@ function simParams() {
     com_x: num('#com_x'), com_y_frac: num('#com_y') / 100, load_point: num('#load_point') / 100,
     nonlinearity_scale: num('#nonlinearity_scale'), spread: num('#spread'), contact_threshold: num('#contact_threshold'),
     arch_drop: num('#arch_drop'), loaded_scan: $('#loaded_scan').checked,
-    toe_flexor: num('#toe_flexor'), toe_stiffness: num('#toe_stiffness'),
+    toe_flexor: num('#toe_flexor'), toe_max_flexion: num('#toe_max_flexion'),
     stiffness_scale: { izquierdo: num('#stiff-izquierdo'), derecho: num('#stiff-derecho') }, tissue,
   };
 }
@@ -185,7 +185,8 @@ function renderReport() {
       ['CoP desde el talón', fmt(f.cop_from_heel_pct, 1) + ' % de la longitud'],
       ['Talón / mediopié / antepié / dedos', `${fmt(f.rearfoot_pct, 1)} / ${fmt(f.midfoot_pct, 1)} / ${fmt(f.forefoot_pct, 1)} / ${fmt(f.toes_pct, 1)} %`],
       ['Apoyo inicial (asentamiento por gravedad)', (f.initial_support_regions || []).join(', ') || '—'],
-      ['Dedos: giro de asentamiento / contacto', `${fmt(f.toe_rest_deg, 1)}° · ${fmt(f.toe_contact_area_cm2, 1)} cm²`],
+      ['Dedos que apoyan', `${f.toes_in_contact ?? '—'} de ${(f.toes || []).length || 5} · ${fmt(f.toe_contact_area_cm2, 1)} cm²`],
+      ['Dedos: giro medio de asentamiento', fmt(f.toe_rest_deg, 1) + '°'],
       ['Descenso del arco interno aplicado', fmt(f.arch_drop_mm, 1) + ' mm'],
       ['Índice del arco (Cavanagh)', fmt(f.arch_index, 2)],
       ['Compresión máx. del tejido', `${fmt(f.max_compression_mm, 1)} mm (${fmt(f.max_tissue_strain_pct, 0)} %)`],
@@ -194,6 +195,12 @@ function renderReport() {
     h += '<table class="cmp"><tr><th>Región</th><th>% pie</th><th>% peso</th><th>cm²</th><th>máx. kPa</th></tr>'
       + f.regions.map((q) => `<tr><td>${q.name}</td><td>${fmt(q.pct_foot, 1)}</td><td>${fmt(q.pct_body, 1)}</td>`
         + `<td>${fmt(q.contact_area_cm2, 1)}</td><td>${fmt(q.peak_kPa, 0)}</td></tr>`).join('') + '</table>';
+    if ((f.toes || []).length)
+      h += '<table class="cmp"><tr><th>Dedo</th><th>N</th><th>% pie</th><th>cm²</th><th>máx. kPa</th><th>giro</th></tr>'
+        + f.toes.map((t) => `<tr><td>${t.name}${t.touches ? '' : ' <small>(sin apoyo)</small>'}</td><td>${fmt(t.force_N, 1)}</td>`
+          + `<td>${fmt(t.pct_foot, 1)}</td><td>${fmt(t.contact_area_cm2, 1)}</td><td>${fmt(t.peak_kPa, 0)}</td>`
+          + `<td>${fmt(t.rest_deg, 0)}°</td></tr>`).join('') + '</table>'
+        + '<div class="hint">Giro: el que necesita cada dedo en su articulación MTF, desde la postura del escaneo, para apoyar en el suelo.</div>';
   }
   h += '<h3>Comparación izquierdo / derecho</h3><table class="cmp"><tr><th>Indicador</th><th>Izq.</th><th>Der.</th><th>Dif.</th><th>Asim. %</th></tr>'
     + r.comparison.map((c) => `<tr><td>${c.name}${c.unit ? ` <small>(${c.unit})</small>` : ''}</td><td>${fmt(c.left, c.unit ? 1 : 2)}</td>`
