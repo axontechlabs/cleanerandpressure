@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulación bilateral · Procesador de mallas plantares</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/bilateral.css">
+</head>
+<body>
+<header>
+  <h1>Simulación bilateral · bipedestación estática</h1>
+  <a class="btn" href="/">← Limpieza de un pie</a>
+  <span id="status" class="idle">Cargue los escaneos de los dos pies</span>
+</header>
+
+<main>
+<aside id="left">
+  <section>
+    <h2>1 · Escaneos</h2>
+    <div class="foot-row">
+      <b class="tag left">I</b>
+      <label class="btn">STL pie izquierdo…<input type="file" id="file-izquierdo" accept=".stl" hidden></label>
+      <span class="fname" id="name-izquierdo">—</span>
+    </div>
+    <div class="foot-row">
+      <b class="tag right">D</b>
+      <label class="btn">STL pie derecho…<input type="file" id="file-derecho" accept=".stl" hidden></label>
+      <span class="fname" id="name-derecho">—</span>
+    </div>
+    <div class="row">
+      <button class="btn small" id="sample">Ejemplo sintético (pareja)</button>
+      <button class="btn small" id="swap" title="Si los archivos están cruzados">Intercambiar pies</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Limpieza de cada pie</h2>
+    <button class="btn wide" id="process" disabled>Procesar ambos escaneos</button>
+    <div class="hint">Mismo procesamiento que la aplicación de un pie (segmentación, contorno, suavizado, sólido y validación), por separado para cada pie.</div>
+    <div id="proc"></div>
+  </section>
+
+  <section>
+    <h2>3 · Persona</h2>
+    <div class="param"><span>Peso corporal</span><input type="number" id="mass" value="70" min="5" max="400" step="0.5"><small>kg</small></div>
+    <div class="param"><span>Modo de equilibrio</span>
+      <select id="mode">
+        <option value="reparto">Reparto I/D indicado</option>
+        <option value="centro_masas">Centro de masas conocido</option>
+      </select>
+    </div>
+    <div id="split-box">
+      <div class="row"><span>Izquierdo</span><input type="range" id="split" min="5" max="95" step="0.5" value="50"><span>Derecho</span></div>
+      <div class="row split-out"><b id="split-l">50,0 %</b><span class="grow"></span><b id="split-r">50,0 %</b></div>
+      <div class="hint">El 50/50 es una hipótesis inicial, no una medición: el reparto real no se puede deducir solo de la forma de los pies.</div>
+    </div>
+    <div id="com-box" hidden>
+      <div class="param"><span>Centro de masas, lateral</span><input type="number" id="com_x" value="0" step="1"><small>mm (+ der.)</small></div>
+      <div class="param"><span>Centro de masas, anteroposterior</span><input type="number" id="com_y" value="32" step="1" min="5" max="85"><small>% pie</small></div>
+      <div class="hint">Proyección horizontal del centro de masas (p. ej. de una plataforma de fuerzas o una foto con plomada). El reparto I/D resulta del equilibrio de momentos.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4 · Postura</h2>
+    <div class="param"><span>Separación entre talones</span><input type="number" id="heel_separation" value="170" step="5" min="60" max="600"><small>mm</small></div>
+    <div class="param"><span>Apertura pie izquierdo</span><input type="number" id="toe_out_left" value="7" step="1" min="-30" max="45"><small>°</small></div>
+    <div class="param"><span>Apertura pie derecho</span><input type="number" id="toe_out_right" value="7" step="1" min="-30" max="45"><small>°</small></div>
+    <div class="param"><span>Avance del pie derecho</span><input type="number" id="advance_right" value="0" step="5" min="-200" max="200"><small>mm</small></div>
+    <div class="param"><span>Línea de carga de cada pie</span><input type="number" id="load_point" value="32" step="1" min="15" max="70"><small>% desde talón</small></div>
+    <div class="hint">Por defecto, postura media preferida en bipedestación (McIlroy y Maki, 1997): 17 cm entre centros de talón y 14° entre los ejes de los pies. La línea de carga es donde cae el centro de presiones de cada pie, justo por delante del tobillo.</div>
+    <button class="btn wide" id="place" disabled>Colocar pies y ver en 3D</button>
+  </section>
+
+  <section>
+    <details id="tissue-box">
+      <summary>Tejido plantar (avanzado)</summary>
+      <div class="param"><span>Escaneo tomado en carga</span><input type="checkbox" id="loaded_scan"></div>
+      <div class="param"><span>Descenso del arco interno</span><input type="number" id="arch_drop" value="6" step="0.5" min="0" max="20"><small>mm</small></div>
+      <div class="param"><span>Tono flexor de los dedos</span><input type="number" id="toe_flexor" value="400" step="50" min="0" max="5000"><small>N·mm</small></div>
+      <div class="param"><span>Rigidez de la articulación MTF</span><input type="number" id="toe_stiffness" value="4000" step="250" min="0" max="50000"><small>N·mm/rad</small></div>
+      <div class="param"><span>Factor de no linealidad β</span><input type="number" id="nonlinearity_scale" value="1" step="0.1" min="0.2" max="3"></div>
+      <div class="param"><span>Reparto lateral del tejido</span><input type="number" id="spread" value="4" step="0.5" min="0" max="15"><small>mm</small></div>
+      <div class="param"><span>Umbral de contacto</span><input type="number" id="contact_threshold" value="2" step="0.5" min="0" max="30"><small>kPa</small></div>
+      <div class="param"><span>Rigidez relativa izq.</span><input type="number" id="stiff-izquierdo" value="1" step="0.05" min="0.1" max="10"></div>
+      <div class="param"><span>Rigidez relativa der.</span><input type="number" id="stiff-derecho" value="1" step="0.05" min="0.1" max="10"></div>
+      <table class="tissue" id="tissue"></table>
+      <div class="hint">Por región y por pie: espesor del tejido sin carga t (mm), módulo inicial E₀ (kPa) y no linealidad β. Presión = E₀/β · (e<sup>β·δ/t</sup> − 1). El descenso del arco se aplica con medio peso por pie y es proporcional a la carga; desactívelo si el escaneo se hizo de pie.</div>
+    </details>
+  </section>
+
+  <section>
+    <button class="btn wide primary" id="simulate" disabled>▶ Simular bipedestación bilateral</button>
+  </section>
+</aside>
+
+<div id="center">
+  <div id="toolbar">
+    <button class="btn small tab active" data-tab="map">Mapa de presión</button>
+    <button class="btn small tab" data-tab="3d">Vista 3D</button>
+    <span class="sep"></span>
+    <span id="map-tools">
+      <button class="btn small active" data-map="bilateral">Bilateral</button>
+      <button class="btn small" data-map="izquierdo">Izquierdo</button>
+      <button class="btn small" data-map="derecho">Derecho</button>
+    </span>
+    <span id="view-tools" hidden>
+      <button class="btn small" data-view="top">Superior</button>
+      <button class="btn small" data-view="bottom">Inferior</button>
+      <button class="btn small" data-view="front">Frontal</button>
+      <button class="btn small" data-view="side">Lateral</button>
+      <button class="btn small" data-view="persp">Perspectiva</button>
+    </span>
+  </div>
+  <div id="map-wrap"><img id="map" alt=""><div id="map-empty">El mapa bilateral aparecerá aquí tras la simulación.</div></div>
+  <canvas id="gl" hidden></canvas>
+</div>
+
+<aside id="right">
+  <section>
+    <h2>Exportación</h2>
+    <div class="exports">
+      <a class="btn small" id="ex-izquierdo">STL limpio · izquierdo</a>
+      <a class="btn small" id="ex-derecho">STL limpio · derecho</a>
+      <a class="btn small" id="ex-png-bilateral">Mapa bilateral (PNG)</a>
+      <a class="btn small" id="ex-png-izquierdo">Mapa izquierdo (PNG)</a>
+      <a class="btn small" id="ex-png-derecho">Mapa derecho (PNG)</a>
+      <a class="btn small" id="ex-csv">Presiones (CSV)</a>
+      <a class="btn small" id="ex-json">Resultados (JSON)</a>
+    </div>
+  </section>
+  <section><h2>Informe</h2><div id="report"><div class="hint">Sin resultados todavía.</div></div></section>
+</aside>
+</main>
+<script type="module" src="/static/bilateral.js"></script>
+</body>
+</html>

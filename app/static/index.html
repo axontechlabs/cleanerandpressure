@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Procesador de mallas plantares</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Procesador de mallas plantares</h1>
+  <label class="btn primary">Cargar STL…<input type="file" id="file" accept=".stl" hidden></label>
+  <select id="sample" title="Cargar un escaneo sintético de prueba">
+    <option value="">Ejemplo sintético…</option>
+    <option value="limpio">Limpio</option>
+    <option value="fragmentos">Con fragmentos</option>
+    <option value="conectado">Geometría conectada</option>
+    <option value="superpuesto">Capas superpuestas</option>
+    <option value="ruido">Ruido</option>
+    <option value="agujeros">Agujeros</option>
+    <option value="incompleto">Incompleto</option>
+    <option value="completo">Todos los defectos</option>
+  </select>
+  <a class="btn" href="/bilateral" title="Dos pies: limpieza de ambos escaneos y simulación de bipedestación">Modo bilateral (dos pies) →</a>
+  <span id="filename"></span>
+  <span id="status" class="idle">Cargue un STL para empezar</span>
+</header>
+
+<main>
+<aside id="left">
+  <section>
+    <h2>Operaciones</h2>
+    <button class="btn wide accent" id="op-auto" disabled>▶ Procesamiento automático completo</button>
+    <div class="ops">
+      <button class="btn" data-op="analyze" disabled>1. Analizar STL</button>
+      <button class="btn" data-op="segment" disabled>2. Segmentar superficie plantar</button>
+      <button class="btn" data-op="extract" disabled>3. Eliminar geometría no deseada</button>
+      <button class="btn" data-op="cut" disabled>4. Recortar y generar contorno</button>
+      <button class="btn" data-op="smooth" disabled>5. Suavizar</button>
+      <button class="btn" data-op="solid" disabled>6. Crear sólido cerrado</button>
+      <button class="btn" data-op="validate" disabled>7. Validar malla</button>
+      <button class="btn" data-op="export" disabled>8. Exportar</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Corrección manual de la segmentación</h2>
+    <div class="tools" id="tools">
+      <button class="btn tool active" data-tool="nav" title="Girar: arrastrar · Desplazar: botón derecho o Mayús · Zoom: rueda">Navegar</button>
+      <button class="btn tool" data-tool="keep" title="Pincel: marcar caras que se deben conservar">Pincel conservar</button>
+      <button class="btn tool" data-tool="remove" title="Pincel: marcar caras que se deben eliminar">Pincel eliminar</button>
+      <button class="btn tool" data-tool="group-keep" title="Clic: conservar todo el grupo conexo de caras con la misma etiqueta">Grupo conservar</button>
+      <button class="btn tool" data-tool="group-remove" title="Clic: eliminar todo el grupo conexo de caras con la misma etiqueta">Grupo eliminar</button>
+      <button class="btn tool" data-tool="main" title="Clic sobre la planta: se usa como región principal y se vuelve a segmentar">Elegir planta</button>
+    </div>
+    <label class="row">Radio del pincel <input type="range" id="brush" min="1" max="30" step="0.5" value="6"><output id="brush-out">6 mm</output></label>
+    <div class="row">
+      <button class="btn small" id="undo" disabled>↶ Deshacer</button>
+      <button class="btn small" id="redo" disabled>↷ Rehacer</button>
+      <button class="btn small" id="clear-manual" disabled>Borrar correcciones</button>
+    </div>
+    <div class="row">
+      <button class="btn small" id="flip" disabled title="La cara plantar detectada es la opuesta">Invertir lado plantar</button>
+      <button class="btn small" id="axis-view" disabled title="Oriente la vista mirando de frente a la planta y pulse">Planta = vista actual</button>
+    </div>
+    <p class="hint">Con un pincel activo: botón izquierdo pinta, botón derecho gira, Mayús+derecho desplaza.</p>
+  </section>
+
+  <section>
+    <h2>Plano de corte</h2>
+    <label class="row"><input type="checkbox" id="plane-on" disabled> Activar plano (vista previa en vivo)</label>
+    <label class="row">Perpendicular a
+      <select id="plane-axis"><option value="long">eje largo</option><option value="width">eje ancho</option><option value="plantar">eje plantar</option></select>
+      <button class="btn small" id="plane-flip">Invertir lado</button>
+    </label>
+    <label class="row">Posición <input type="range" id="plane-off" min="-200" max="200" step="0.5" value="0"><output id="plane-off-out">0 mm</output></label>
+    <label class="row">Inclinación A <input type="range" id="plane-a" min="-80" max="80" step="1" value="0"><output id="plane-a-out">0°</output></label>
+    <label class="row">Inclinación B <input type="range" id="plane-b" min="-80" max="80" step="1" value="0"><output id="plane-b-out">0°</output></label>
+    <div class="row">
+      <button class="btn small accent" id="plane-apply" disabled>Confirmar corte</button>
+      <button class="btn small" id="plane-cancel" disabled>Cancelar</button>
+      <button class="btn small" id="plane-clear" disabled>Quitar cortes (<span id="plane-count">0</span>)</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Parámetros</h2>
+    <div id="params"></div>
+    <button class="btn small" id="params-reset">Restablecer valores</button>
+  </section>
+
+  <section>
+    <h2>Exportación</h2>
+    <label class="row">Etapa
+      <select id="exp-stage"><option value="solido">Sólido final</option><option value="suavizado">Suavizado</option><option value="recortado">Recortado</option><option value="segmentado">Segmentado</option><option value="original">Original limpio</option></select>
+    </label>
+    <label class="row">Formato
+      <select id="exp-format"><option value="stl">STL</option><option value="obj">OBJ</option><option value="ply">PLY</option></select>
+    </label>
+    <label class="row">Orientación
+      <select id="exp-frame"><option value="original">la del escaneo</option><option value="canonical">base apoyada en Z=0</option></select>
+    </label>
+    <div class="row">
+      <button class="btn small accent" id="exp-go" disabled>Descargar</button>
+      <button class="btn small" id="exp-original" disabled>Archivo original intacto</button>
+    </div>
+  </section>
+</aside>
+
+<div id="center">
+  <div id="toolbar">
+    <button class="btn small" data-view="top" title="Mirando a la planta">Superior</button>
+    <button class="btn small" data-view="bottom">Inferior</button>
+    <button class="btn small" data-view="front">Frontal</button>
+    <button class="btn small" data-view="back">Trasera</button>
+    <button class="btn small" data-view="side">Lateral</button>
+    <button class="btn small" data-view="side2">Lateral 2</button>
+    <button class="btn small" data-view="fit">Encajar</button>
+    <span class="sep"></span>
+    <label><input type="checkbox" id="t-wire"> Malla</label>
+    <label><input type="checkbox" id="t-edges"> Bordes abiertos</label>
+    <label><input type="checkbox" id="t-normals"> Normales</label>
+    <label><input type="checkbox" id="t-labels" checked> Segmentación</label>
+    <label><input type="checkbox" id="t-dev"> Mapa de desviación</label>
+  </div>
+  <canvas id="gl"></canvas>
+  <div id="legend"></div>
+  <div id="drop">Suelte aquí el archivo STL</div>
+</div>
+
+<aside id="right">
+  <section>
+    <h2>Etapas (comparación)</h2>
+    <div id="stages"></div>
+    <label class="row">Opacidad de superposición <input type="range" id="opacity" min="0.1" max="1" step="0.05" value="0.45"></label>
+    <p class="hint">Marque varias etapas para superponerlas. «Volver» descarta las etapas posteriores.</p>
+  </section>
+  <section>
+    <h2>Informe</h2>
+    <div id="report"><p class="hint">Aquí aparecerán el análisis, los avisos y la validación.</p></div>
+  </section>
+</aside>
+</main>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

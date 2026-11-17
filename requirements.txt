@@ -1,0 +1,7 @@
+# Núcleo geométrico (BSD) y servidor web local (BSD). Sin dependencias compiladas propias.
+numpy>=1.26,<3
+scipy>=1.11,<2
+starlette>=0.37,<2
+uvicorn>=0.29,<1
+# Mapas de presión en PNG del modo bilateral (licencia PSF/BSD).
+matplotlib>=3.7,<4
