@@ -33,7 +33,10 @@ def processed(name: str):
     sc = S.make_scenario(name, ns=NS, nt=NT)
     pipe = Pipeline()
     pipe.load(stl_bytes(sc.mesh), f"{name}.stl")
-    out = pipe.auto()
+    # Fidelidad frente a la planta analítica: se mide en modo «planta» (sin las paredes de la
+    # plantilla, casi verticales, donde un error lateral mínimo es un error grande en altura). El
+    # corte de plantilla se prueba en tests/test_insole_ai.py.
+    out = pipe.auto({"segment": {"mode": "planta"}})
     return sc, pipe, out
 
 

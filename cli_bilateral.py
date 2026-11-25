@@ -6,6 +6,7 @@ Uso:
   python cli_bilateral.py izq.stl der.stl --peso 82 --reparto-izquierdo 45 -o salida/
   python cli_bilateral.py izq.stl der.stl --peso 70 --centro-masas 15 38 -o salida/
   python cli_bilateral.py izq.stl der.stl --peso 70 --estatura 165 --caida-navicular 7 -o salida/
+  python cli_bilateral.py izq.stl der.stl --peso 70 --ia-corte 2 --ia-presion 3 -o salida/   # revisión por IA
 
 Escribe en la carpeta de salida: los dos STL limpios (independientes, en el marco de su
 archivo), el mapa bilateral y los individuales en PNG, el CSV de presiones y el JSON de
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from core.bilateral import BilateralError
 from core.bilateral_session import BilateralSession
+from core.ai_client import AIError
 from core.pipeline import PipelineError
 
 
@@ -40,6 +42,9 @@ def main(argv=None) -> int:
     ap.add_argument("--apertura", type=float, nargs=2, default=(7.0, 7.0), metavar=("IZQ", "DER"))
     ap.add_argument("--linea-carga", type=float, default=32.0, help="%% de la longitud desde el talón")
     ap.add_argument("--config", help="JSON con {'limpieza':{}, 'postura':{}, 'simulacion':{}}")
+    ap.add_argument("--ia-corte", type=int, default=0, metavar="RONDAS", help="revisar el corte de cada pie con Claude")
+    ap.add_argument("--ia-presion", type=int, default=0, metavar="RONDAS", help="revisar el mapa de presión con Claude")
+    ap.add_argument("--modelo", help="modelo de Claude (por defecto claude-sonnet-5-5)")
     a = ap.parse_args(argv)
     cfg = json.loads(Path(a.config).read_text()) if a.config else {}
     out = Path(a.salida)
@@ -49,6 +54,18 @@ def main(argv=None) -> int:
         for side, path in (("izquierdo", a.izquierdo), ("derecho", a.derecho)):
             s.load(side, Path(path).read_bytes(), Path(path).name)
         proc = s.process(cfg.get("limpieza"))
+        client = None
+        if a.ia_corte > 0 or a.ia_presion > 0:
+            from core.ai_client import ClaudeClient
+            client = ClaudeClient(model=a.modelo)
+        if a.ia_corte > 0:
+            from core.ai_tuner import tune_cut
+            for side in ("izquierdo", "derecho"):
+                r = tune_cut(s.pipes[side], client, rounds=a.ia_corte,
+                             log=lambda e, side=side: print(f"IA corte {side} ronda {e['round']}: {e['verdict']} — "
+                                                            f"{e['diagnosis']}"))
+                proc[side]["valid"] = bool(r["validacion"]["valid"])
+                s.process_reports[side]["valid"] = proc[side]["valid"]
         for side, r in proc.items():
             print(f"Pie {side}: {'válido' if r['valid'] else 'NO VÁLIDO'} ({r['seconds']} s)")
         if not all(r["valid"] for r in proc.values()):
@@ -63,6 +80,13 @@ def main(argv=None) -> int:
         if a.centro_masas:
             sim.update(mode="centro_masas", com_x=a.centro_masas[0], com_y_frac=a.centro_masas[1] / 100.0)
         rep = s.simulate(sim, stance)
+        if a.ia_presion > 0:
+            from core.ai_tuner import tune_pressure
+            ia = tune_pressure(s, client, rounds=a.ia_presion, sim=sim,
+                               log=lambda e: print(f"IA presión ronda {e['round']}: {e['verdict']} — {e['diagnosis']} "
+                                                   f"{json.dumps(e['changes'], ensure_ascii=False)}"))
+            rep = s.report()
+            print(f"IA: {ia['usage']['calls']} llamada(s) ({ia['model']})")
         for w in ("bilateral", "izquierdo", "derecho"):
             (out / f"mapa_presion_{w}.png").write_bytes(s.map_png(w))
         (out / "presiones_bilateral.csv").write_bytes(s.export_csv())
@@ -75,7 +99,7 @@ def main(argv=None) -> int:
             print("Aviso:", w)
         print(f"Resultados en {out.resolve()}")
         return 0
-    except (BilateralError, PipelineError) as e:
+    except (BilateralError, PipelineError, AIError) as e:
         print("Error:", e, file=sys.stderr)
         return 1
 

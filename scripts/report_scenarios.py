@@ -32,7 +32,7 @@ def main():
         pipe = Pipeline()
         t0 = time.time()
         pipe.load(stl_bytes(sc.mesh), f"{name}.stl")
-        out = pipe.auto()
+        out = pipe.auto({"segment": {"mode": "planta"}})
         dt = time.time() - t0
         err = sc.height_error(pipe.mesh("suavizado").vertices)[pipe._support]
         q = out["validacion"]["quality"]

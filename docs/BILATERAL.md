@@ -407,3 +407,26 @@ Son comprobaciones de verosimilitud frente a la literatura, no una validación.
   (1954) 25–30: mecanismo de molinete de la fascia plantar.
 - T. Yanagiya et al. *Athletic event-specific characteristics in floating toes during the static
   standing posture*. J. Phys. Ther. Sci. 32 (2020) 342–347: prevalencia del dedo flotante.
+
+
+## Dedos como pulpejos separados (noviembre 2026)
+
+Los escaneos con sensores de profundidad suelen mostrar los dedos juntos, como una banda plana; la
+simulación daba entonces una franja de presión en lugar de cinco apoyos. Ahora el modelo añade a
+cada dedo el relieve que el escaneo no muestra (solo lo que falta respecto a su propio punto más
+bajo, a cada altura del dedo):
+
+- **Sección elíptica** de los dedos 2.º–5.º (`toe_definition`, 1 por defecto; altura/semianchura
+  0,6): la piel entre dedos queda por encima del suelo. El hallux, ancho y de pulpejo plano, no se
+  redondea: su borde lo marca el 2.º dedo.
+- **Falange proximal algo levantada** en los dedos menores (`toe_pulp_lift`, 1 mm): apoyan con el
+  pulpejo distal.
+- **Reparto lateral propio de los dedos menores** (`toe_spread`, 2 mm frente a 4 mm en la planta) y
+  tejido de su pulpejo menos no lineal (β = 4 frente a 6): el pulpejo se adapta al suelo y su presión no se
+  dispara. En los dedos, la transición de propiedades entre el hallux y el 2.º dedo sigue la
+  pertenencia de cada celda a cada dedo (piel compartida), no un difuminado de 4 mm.
+
+Con ello, en bipedestación estática los dedos aparecen como 4–6 manchas y su pico queda en torno al
+30–45 % del máximo del pie (referencia en plataforma: hallux ≈ 20–26 %, 2.º dedo ≈ 18–24 %,
+3.º–5.º ≈ 13–16 %; Symmetry 2021, 13(8):1476). La revisión por IA puede reajustar estos parámetros y
+el tejido por región (ver [IA.md](IA.md)).

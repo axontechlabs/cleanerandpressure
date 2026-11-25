@@ -5,6 +5,8 @@ Ejemplos:
     python cli.py escaneo.stl -o planta_solida.stl
     python cli.py escaneo.stl -o planta.obj --thickness 8 --mode offset --report informe.json
     python cli.py escaneo.stl -o suave.ply --stage suavizado --config parametros.json
+    python cli.py escaneo.stl -o plantilla.stl --ia 3 --vistas vistas.png   # revisión del corte por IA
+    python cli.py escaneo.stl -o planta.stl --corte planta                   # solo planta (sin paredes)
 
 Código de salida: 0 si el sólido supera la validación, 2 si no, 1 en caso de error.
 """
@@ -15,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+from core.ai_client import AIError
 from core.pipeline import STAGES, Pipeline, PipelineError
 
 
@@ -34,6 +37,13 @@ def main(argv=None) -> int:
     ap.add_argument("--config", help="JSON con parámetros: {segment:{}, cut:{}, smooth:{}, solid:{}}")
     ap.add_argument("--report", help="guardar el informe completo en JSON")
     ap.add_argument("--force", action="store_true", help="exportar aunque la validación falle")
+    ap.add_argument("--corte", choices=("plantilla", "planta"),
+                    help="plantilla (por defecto): planta + copa de talón + pestañas; planta: solo planta")
+    ap.add_argument("--copa-talon", type=float, help="altura de la copa del talón sobre el suelo (mm)")
+    ap.add_argument("--ia", type=int, default=0, metavar="RONDAS",
+                    help="revisar el corte con Claude (necesita ANTHROPIC_API_KEY o .env); 0 = no")
+    ap.add_argument("--modelo", help="modelo de Claude para la revisión (por defecto claude-sonnet-5-5)")
+    ap.add_argument("--vistas", help="guardar en PNG las vistas del corte (las que analiza la IA)")
     args = ap.parse_args(argv)
 
     params = json.loads(Path(args.config).read_text()) if args.config else {}
@@ -43,6 +53,10 @@ def main(argv=None) -> int:
             solid[key] = getattr(args, key)
     if args.resolution is not None:
         params.setdefault("cut", {})["resolution"] = args.resolution
+    if args.corte:
+        params.setdefault("segment", {})["mode"] = args.corte
+    if args.copa_talon is not None:
+        params.setdefault("segment", {})["heel_cup"] = args.copa_talon
 
     pipe = Pipeline()
     try:
@@ -51,7 +65,23 @@ def main(argv=None) -> int:
         if args.flip:
             pipe.set_orientation(flip=True)
         out = pipe.auto(params)
-    except (PipelineError, ValueError, OSError) as e:
+        cov = out["recortado"].get("cobertura") or {}
+        if cov.get("zones"):
+            print("Plantilla: cobertura " + ", ".join(f"{z['name']} {100 * z['coverage']:.0f}%" for z in cov["zones"].values())
+                  + f" · {len(pipe.tuning)} intento(s) de corte")
+        if args.ia > 0:
+            from core.ai_client import ClaudeClient
+            from core.ai_tuner import tune_cut
+            res = tune_cut(pipe, ClaudeClient(model=args.modelo), rounds=args.ia, planes=params.get("planes"),
+                           log=lambda e: print(f"IA ronda {e['round']}: {e['verdict']} — {e['diagnosis']} "
+                                               f"{json.dumps(e['changes'], ensure_ascii=False)}"))
+            out["validacion"] = res["validacion"]
+            print(f"IA: {res['usage']['calls']} llamada(s), {res['usage']['input_tokens']} tokens de entrada, "
+                  f"{res['usage']['output_tokens']} de salida ({res['model']})")
+        if args.vistas and (pipe.reports.get("segmentacion") or {}).get("insole"):
+            from core.ai_tuner import cut_views_png
+            Path(args.vistas).write_bytes(cut_views_png(pipe, title=Path(args.input).name))
+    except (PipelineError, AIError, ValueError, OSError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 

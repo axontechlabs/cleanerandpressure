@@ -7,7 +7,7 @@ const SIDES = ['izquierdo', 'derecho'];
 const REGIONS = [   // clave, nombre, espesor (mm), E0 (kPa), β
   ['talon_medial', 'Talón medial', 19, 35, 8], ['talon_lateral', 'Talón lateral', 19, 35, 8],
   ['mediopie', 'Mediopié', 12, 30, 6], ['met1', 'Antepié 1.er MTT', 10, 35, 6], ['met23', 'Antepié 2.º–3.er', 11, 35, 6],
-  ['met45', 'Antepié 4.º–5.º', 9, 35, 6], ['hallux', 'Hallux', 8, 30, 6], ['dedos', 'Dedos 2.º–5.º', 7, 30, 6],
+  ['met45', 'Antepié 4.º–5.º', 9, 35, 6], ['hallux', 'Hallux', 8, 30, 6], ['dedos', 'Dedos 2.º–5.º', 7, 30, 4],
 ];
 const THERMAL = [[0, 0, 255], [0, 255, 255], [0, 255, 0], [255, 255, 0], [255, 128, 0], [255, 0, 0]];
 
@@ -85,8 +85,32 @@ function simParams() {
     nonlinearity_scale: num('#nonlinearity_scale'), spread: num('#spread'), contact_threshold: num('#contact_threshold'),
     arch_drop: opt('#arch_drop'), height_cm: opt('#height_cm'), loaded_scan: $('#loaded_scan').checked,
     toe_flexor: num('#toe_flexor'), toe_max_flexion: num('#toe_max_flexion'),
+    toe_definition: num('#toe_definition'), toe_pulp_lift: num('#toe_pulp_lift'), toe_spread: num('#toe_spread'),
     stiffness_scale: { izquierdo: num('#stiff-izquierdo'), derecho: num('#stiff-derecho') }, tissue,
   };
+}
+
+async function aiRefresh() {
+  try {
+    const st = await api('/api/ai/status');
+    $('#ai-state').textContent = st.configured ? `Clave configurada (${st.source}: ${st.key_hint}) · modelo ${st.model}` : 'Sin clave: introdúzcala para usar la IA';
+  } catch (e) { /* sin servidor */ }
+}
+function aiLog(groups) {
+  let h = '';
+  for (const [title, hist] of groups) {
+    h += `<h3>${title}</h3>` + (hist || []).map((e) => `<div class="hint"><b>Ronda ${e.round}: ${e.verdict || ''}</b> — ${e.diagnosis || ''}`
+      + `${JSON.stringify(e.changes || {}).length > 30 ? '<br>Cambios: ' + JSON.stringify(e.changes) : ''}${e.reverted ? '<br>(deshecho)' : ''}</div>`).join('');
+  }
+  $('#ai-log').innerHTML = h;
+}
+function applySim(p) {
+  for (const k of ['toe_flexor', 'toe_definition', 'toe_pulp_lift', 'toe_spread', 'spread', 'nonlinearity_scale', 'toe_max_flexion', 'arch_drop']) {
+    if (p && p[k] !== undefined && p[k] !== null && $('#' + k)) $('#' + k).value = p[k];
+  }
+  if (p && p.load_point) $('#load_point').value = Math.round(p.load_point * 100);
+  for (const s of SIDES) for (const [reg, vals] of Object.entries(((p || {}).tissue || {})[s] || {}))
+    for (const [q, v] of Object.entries(vals)) { const el = $(`#tissue input[data-side="${s}"][data-reg="${reg}"][data-q="${q}"]`); if (el) el.value = v; }
 }
 
 function updateSplit() {
@@ -105,6 +129,8 @@ function refreshButtons() {
   $('#process').disabled = !both;
   $('#place').disabled = !valid;
   $('#simulate').disabled = !valid;
+  $('#ai-cut').disabled = !both;
+  $('#ai-pressure').disabled = !valid;
   for (const s of SIDES) {
     $(`#name-${s}`).textContent = files[s] || '—';
     const a = $(`#ex-${s}`);
@@ -357,6 +383,28 @@ function wire() {
     status(`Equilibrio: ${fmt(g.feet_force_N, 1)} N = m·g · reparto ${fmt(g.split_left_pct)} / ${fmt(g.split_right_pct)} % · máx. ${fmt(g.peak_kPa, 0)} kPa`,
       (d.report.warnings || []).length ? 'warn' : 'ok');
   });
+  $('#ai-save').onclick = () => busy('Guardando la clave', async () => {
+    await api('/api/ai/key', { key: $('#ai-key').value, persist: $('#ai-persist').checked });
+    $('#ai-key').value = ''; await aiRefresh(); status('Clave configurada', 'ok');
+  });
+  $('#ai-cut').onclick = () => busy('La IA está revisando el corte de los dos pies (unos minutos)', async () => {
+    const d = await api('/api/bi/ai/cut', { rounds: num('#ai-rounds') }); S.state = d.state; S.report = null; S.placement = null;
+    renderProcessing(); renderReport(); showMap();
+    aiLog(SIDES.map((s) => [`Corte pie ${s}`, d.report[s].history]));
+    const ok = SIDES.every((s) => d.report[s].validacion.valid);
+    status(ok ? 'Corte revisado por IA: dos sólidos válidos' : 'Corte revisado, pero algún sólido no es válido', ok ? 'ok' : 'err');
+  });
+  $('#ai-pressure').onclick = () => busy('La IA está revisando el mapa de presión (unos minutos)', async () => {
+    const d = await api('/api/bi/ai/pressure', { rounds: num('#ai-rounds'), sim: simParams(), stance: stanceParams() });
+    S.state = d.state; S.report = d.report; S.placement = d.report.placement;
+    applySim(d.report.ia.final_params);
+    renderReport(); refreshButtons(); setTab('map'); showMap();
+    await loadMeshes(); await paintPressure(); setTab('map');
+    aiLog([['Mapa de presión', d.report.ia.history]]);
+    const h = d.report.ia.history, last = h[h.length - 1] || {};
+    status(`IA (${h.length} ronda/s): ${last.diagnosis || ''}`, last.verdict === 'correcto' ? 'ok' : 'warn');
+  });
+  aiRefresh();
   $('#split').addEventListener('input', updateSplit);
   $('#mode').addEventListener('change', () => {
     const com = $('#mode').value === 'centro_masas';

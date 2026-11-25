@@ -11,6 +11,8 @@ from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 
 from core import synthetic
+from core import ai_client
+from core.ai_client import AIError
 from core.bilateral import SIDES, BilateralError
 from core.bilateral_session import BilateralSession
 from core.mesh_io import stl_bytes
@@ -27,7 +29,7 @@ def make_routes(static_dir, workspace, json_response, body_json):
                 return fn(*a, **k)
         try:
             return await run_in_threadpool(locked), None
-        except (BilateralError, PipelineError) as e:
+        except (BilateralError, PipelineError, AIError) as e:
             return None, json_response({"error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
@@ -125,8 +127,48 @@ def make_routes(static_dir, workspace, json_response, body_json):
             return json_response({"error": "Exportación desconocida."}, 404)
         return err or Response(res, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
+    async def ai_cut(request: Request):
+        """Revisión por IA del corte de cada pie (y nueva validación)."""
+        body = await body_json(request)
+
+        def do():
+            from core.ai_tuner import tune_cut
+            client = ai_client.ClaudeClient(model=body.get("model") or None)
+            out = {}
+            for s in SIDES:
+                p = session.pipes[s]
+                if p.work is None:
+                    raise BilateralError(f"Falta el escaneo del pie {s}.")
+                if "recortado" not in p.stages:
+                    p.analyze()
+                    p.autotune_cut()
+                out[s] = tune_cut(p, client, rounds=int(body.get("rounds", 3)))
+                v = out[s]["validacion"]
+                session.process_reports[s] = {**session.process_reports.get(s, {}), "file": p.name,
+                                              "valid": bool(v["valid"]),
+                                              "failed_checks": [c["name"] for c in v["checks"] if not c["ok"]]}
+            session.reset_results()
+            return out
+        res, err = await run(do)
+        return err or json_response(with_state(res))
+
+    async def ai_pressure(request: Request):
+        """Revisión por IA del mapa de presión: reajusta el modelo y vuelve a simular."""
+        body = await body_json(request)
+
+        def do():
+            from core.ai_tuner import tune_pressure
+            client = ai_client.ClaudeClient(model=body.get("model") or None)
+            out = tune_pressure(session, client, rounds=int(body.get("rounds", 3)), sim=body.get("sim"),
+                                stance=body.get("stance"))
+            return {"ia": out, **session.report()}
+        res, err = await run(do)
+        return err or json_response(with_state(res))
+
     return [
         Route("/bilateral", page),
+        Route("/api/bi/ai/cut", ai_cut, methods=["POST"]),
+        Route("/api/bi/ai/pressure", ai_pressure, methods=["POST"]),
         Route("/api/bi/upload/{side}", upload, methods=["POST"]),
         Route("/api/bi/sample", sample, methods=["POST"]),
         Route("/api/bi/swap", swap, methods=["POST"]),

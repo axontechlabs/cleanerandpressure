@@ -15,7 +15,14 @@ const STAGES = [
 const LABEL_COLORS = [[150, 104, 100], [78, 172, 100], [236, 196, 60]];
 
 const PARAMS = {
-  segment: { title: 'Segmentación (tolerancias)', items: [
+  segment: { title: 'Segmentación y corte de plantilla', items: [
+    ['mode', 'Tipo de corte', 'plantilla', [['plantilla', 'plantilla: planta + copa de talón + pestañas'], ['planta', 'solo planta (por pendiente)']], '', ''],
+    ['heel_cup', 'Copa del talón', 15, 0, 35, 0.5, 'mm', 'Altura de la pared del talón sobre el suelo (≤ 10 mm se considera baja)'],
+    ['medial_flange', 'Pestaña medial (arco)', 0, 0, 45, 0.5, 'mm', '0 = automática: altura del arco medida + 6 mm'],
+    ['lateral_flange', 'Pared lateral', 10, 0, 30, 0.5, 'mm', 'Altura de la pared lateral del mediopié sobre el suelo'],
+    ['forefoot_wall', 'Borde del antepié', 6, 0, 20, 0.5, 'mm', 'Altura del borde en el antepié'],
+    ['toe_wall', 'Borde de los dedos', 4, 0, 15, 0.5, 'mm', 'Altura del borde en los dedos'],
+    ['wall_max_angle', 'Pendiente máx. de pared', 80, 60, 87, 1, '°', 'Paredes más verticales no se pueden representar como campo de alturas'],
     ['seed_angle', 'Ángulo de semilla', 35, 5, 80, 1, '°', 'Pendiente máxima de las caras claramente plantares'],
     ['max_angle', 'Ángulo máximo', 62, 10, 88, 1, '°', 'Pendiente hasta la que crece la planta (más alto = sube más por los laterales)'],
     ['crease_angle', 'Ángulo de pliegue', 80, 20, 180, 1, '°', 'Ángulo entre caras vecinas que actúa como barrera'],
@@ -104,6 +111,13 @@ function buildParams() {
       d.appendChild(row);
     }
     root.appendChild(d);
+  }
+}
+function setParams(group, values) {
+  for (const el of $$(`#params [data-g="${group}"]`)) {
+    const v = (values || {})[el.dataset.k];
+    if (v === undefined || v === null) continue;
+    el.value = v; el.dispatchEvent(new Event('input'));
   }
 }
 function getParams(group) {
@@ -300,6 +314,36 @@ const OPS = {
   export: () => doExport(),
 };
 
+// ------------------------------------------------------------------ revisión por IA
+async function aiRefresh() {
+  try {
+    const st = await api('/api/ai/status', { method: 'GET' });
+    $('#ai-state').textContent = st.configured ? `Clave configurada (${st.source}: ${st.key_hint}) · modelo ${st.model}` : 'Sin clave: introdúzcala para usar la IA';
+    $('#ai-state').className = 'hint ' + (st.configured ? 'ok' : 'warn');
+    if (!$('#ai-model').value) $('#ai-model').value = st.model;
+  } catch (e) { /* sin servidor */ }
+}
+async function aiSaveKey() {
+  await run('Guardando la clave', async () => {
+    await api('/api/ai/key', { json: { key: $('#ai-key').value, model: $('#ai-model').value, persist: $('#ai-persist').checked } });
+    $('#ai-key').value = ''; await aiRefresh(); return 'Clave configurada';
+  });
+}
+function aiCut() {
+  run('La IA está revisando el corte (puede tardar 1–3 min)', async () => {
+    const r = await api('/api/ai/cut', { json: { rounds: Number($('#ai-rounds').value), model: $('#ai-model').value,
+      segment: getParams('segment'), cut: getParams('cut'), planes: [...S.planes] } });
+    if (r.report.final_params) { setParams('segment', r.report.final_params.segment); setParams('cut', r.report.final_params.cut); }
+    await fetchLabels();
+    await syncStages(r.state, 'segmentado'); paintLabels();
+    $('#ai-views').href = '/api/cut_views.png?t=' + Date.now(); $('#ai-views').hidden = false;
+    const h = r.report.history || [], last = h[h.length - 1] || {};
+    const v = r.report.validacion;
+    const msg = `IA (${h.length} ronda/s): ${last.diagnosis || ''}`;
+    return { text: msg + (v && !v.valid ? ' · sólido NO válido' : ''), cls: last.verdict === 'correcto' && v && v.valid ? 'ok' : 'warn' };
+  });
+}
+
 function autoAll() {
   run('Procesamiento automático', async () => {
     const planes = [...S.planes];
@@ -334,6 +378,7 @@ function updateButtons() {
     solid: has('solido'), validate: rep('validacion'), export: false };
   for (const el of $$('[data-op]')) { el.disabled = b || !en[el.dataset.op]; el.classList.toggle('done', done[el.dataset.op]); }
   $('#op-auto').disabled = b || !has('original');
+  $('#ai-cut').disabled = b || !has('original');
   $('#undo').disabled = !S.undo.length; $('#redo').disabled = !S.redo.length;
   $('#clear-manual').disabled = b || !(S.manual && S.manual.some((v) => v));
   $('#flip').disabled = $('#axis-view').disabled = b || !has('original');
@@ -380,6 +425,16 @@ function renderReport() {
     if (ms && r.bands) h += '<div class="hint">Análisis por tamaño de detalle: nivel típico medido y parte de la superficie donde se conserva por ser relieve real.</div>' + rows(r.bands.map((b) =>
       [`· ${fmt(b.from, 0)}–${fmt(b.to, 0)} mm`, `${fmt(b.level, 3)} mm · conservado ${fmt(b.kept_pct, 0)}%`]));
     h += msgs(r.warnings, 'warn'); }
+  if (R.recortado && R.recortado.ia) { const ia = R.recortado.ia; h += '<h3>Revisión por IA</h3>' + rows([
+    ['Modelo', esc(ia.model)], ['Llamadas / tokens', `${fmt(ia.usage.calls)} / ${fmt(ia.usage.input_tokens + ia.usage.output_tokens)}`]])
+    + ia.history.map((e) => `<div class="hint"><b>Ronda ${e.round}: ${esc(e.verdict || '')}</b> — ${esc(e.diagnosis || '')}`
+      + (Object.keys(e.changes.segment).length || Object.keys(e.changes.cut).length ? `<br>Cambios: ${esc(JSON.stringify({ ...e.changes.segment, ...e.changes.cut }))}` : '')
+      + (e.reverted ? '<br>(deshecho: empeoraba la cobertura)' : '') + '</div>').join(''); }
+  if (R.recortado && R.recortado.cobertura && R.recortado.cobertura.zones) { const c = R.recortado.cobertura; h += '<h3>Plantilla: cobertura</h3>' + rows([
+    ...Object.values(c.zones).map((z) => ['· ' + esc(z.name), fmt(100 * z.coverage, 0) + '%']),
+    ...Object.entries(c.walls || {}).map(([k, w]) => ['· Pared ' + esc(k.replace('_', ' ')), `${fmt(w.reached_mm, 0)} / ${fmt(w.target_mm, 0)} mm`]),
+    ['Longitud (posible)', `${fmt(c.length_mm, 0)} (${fmt(c.length_possible_mm, 0)}) mm`], ['Puntuación', fmt(c.score, 3)],
+    ['Reajustes automáticos', fmt((R.recortado.autotune || []).length)]]) + msgs(c.problems || [], 'warn'); }
   if (R.recortado) { const r = R.recortado; h += '<h3>Recorte y contorno</h3>' + rows([
     ['Resolución', fmt(r.resolution) + ' mm'], ['Caras / vértices', `${fmt(r.faces)} / ${fmt(r.vertices)}`],
     ['Contornos / longitud', `${r.boundary_loops} / ${fmt(r.contour_length, 0)} mm`], ['Huella', fmt(r.footprint_area / 100, 1) + ' cm²'],
@@ -497,6 +552,9 @@ function bindUI() {
   $('#sample').onchange = (e) => { const v = e.target.value; e.target.value = ''; if (v) run('Generando ejemplo', async () => afterLoad(await api('/api/sample/' + v))); };
   $$('[data-op]').forEach((b) => { b.onclick = () => OPS[b.dataset.op](); });
   $('#op-auto').onclick = autoAll;
+  $('#ai-cut').onclick = aiCut;
+  $('#ai-save').onclick = aiSaveKey;
+  aiRefresh();
   $$('.tool').forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
   $('#brush').oninput = (e) => { $('#brush-out').textContent = e.target.value + ' mm'; };
   $('#undo').onclick = () => { const e = S.undo.pop(); if (e) { S.redo.push(e); applyEdit(e, 'old'); } };
