@@ -232,3 +232,34 @@ def test_ai_required_without_key(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_client, "_runtime_key", None)
     with pytest.raises(AIError, match="Sin IA"):
         require_client()
+
+
+def test_connection_check_at_startup(monkeypatch, tmp_path):
+    """Al abrir el programa: se comprueba la conexión con una llamada mínima y queda conectado."""
+    from core import ai_client
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.setattr(ai_client, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.setattr(ai_client, "_runtime_key", None)
+    monkeypatch.setattr(ai_client, "_runtime_model", None)
+    monkeypatch.setattr(ai_client, "_connection", {"ok": False, "error": None, "checked_key": None,
+                                                   "checked_model": None})
+    st = ai_client.status()
+    assert not st["configured"] and not st["connected"] and st["model"] == "claude-sonnet-5-5"
+    ai_client.set_api_key("sk-ant-prueba-9999", persist=True)
+    sent = []
+
+    def ok(body):
+        sent.append(body)
+        return {"content": [{"type": "text", "text": "OK"}]}
+    st = ai_client.test_connection(transport=ok)
+    assert st["connected"] and st["saved"] and sent[0]["model"] == "claude-sonnet-5-5" and sent[0]["max_tokens"] <= 16
+
+    def bad(body):
+        raise AIError("La API ha rechazado la clave (401).")
+    st = ai_client.test_connection(transport=bad)
+    assert not st["connected"] and "401" in st["error"]
+    # cambiar solo el modelo conserva la clave
+    ai_client.set_api_key(None, model="claude-opus-5-5", persist=True)
+    assert ai_client.get_api_key() == "sk-ant-prueba-9999" and ai_client.get_model() == "claude-opus-5-5"
+    assert not ai_client.status()["connected"]          # hay que volver a comprobar con el modelo nuevo

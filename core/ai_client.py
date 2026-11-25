@@ -29,6 +29,11 @@ ENV_FILE = ROOT / ".env"
 
 _runtime_key: str | None = None
 _runtime_model: str | None = None
+_connection: dict = {"ok": False, "error": None, "checked_key": None, "checked_model": None}
+
+MODELS = (("claude-sonnet-5-5", "Claude Sonnet 5.5 (recomendado)"),
+          ("claude-opus-5-5", "Claude Opus 5.5 (más capaz, más caro)"),
+          ("claude-haiku-5-5", "Claude Haiku 5.5 (más barato)"))
 
 
 class AIError(RuntimeError):
@@ -65,12 +70,14 @@ def set_api_key(key: str | None, model: str | None = None, persist: bool = False
     key = (key or "").strip() or None
     if key is not None and not key.startswith("sk-"):
         raise AIError("La clave no parece válida: las claves de la API de Claude empiezan por «sk-».")
-    _runtime_key = key
+    if key is not None:                  # sin clave nueva se conserva la actual (solo cambia el modelo)
+        _runtime_key = key
     if model:
         _runtime_model = model.strip()
-    if persist and key:
+    if persist and (key or model):
         env = _read_env_file()
-        env["ANTHROPIC_API_KEY"] = key
+        if key:
+            env["ANTHROPIC_API_KEY"] = key
         if model:
             env["ANTHROPIC_MODEL"] = model.strip()
         ENV_FILE.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
@@ -85,8 +92,33 @@ def status() -> dict:
     k = get_api_key()
     src = ("variable de entorno" if os.environ.get("ANTHROPIC_API_KEY") else
            "interfaz (sesión)" if _runtime_key else ".env" if k else None)
+    connected = (bool(k) and _connection["ok"] and _connection["checked_key"] == k
+                 and _connection["checked_model"] == get_model())
     return {"configured": bool(k), "source": src, "model": get_model(),
-            "key_hint": (k[:7] + "…" + k[-4:]) if k else None}
+            "key_hint": (k[:7] + "…" + k[-4:]) if k else None, "connected": connected,
+            "error": _connection["error"] if k and _connection["checked_key"] == k else None,
+            "models": [{"id": m, "name": n} for m, n in MODELS],
+            "saved": bool(_read_env_file().get("ANTHROPIC_API_KEY"))}
+
+
+def test_connection(transport=None) -> dict:
+    """Llamada mínima a la API (unos pocos tokens) para comprobar clave, créditos y modelo."""
+    k = get_api_key()
+    model = get_model()
+    _connection.update(ok=False, error=None, checked_key=k, checked_model=model)
+    if not k and transport is None:
+        _connection["error"] = "No hay clave configurada."
+        return status()
+    try:
+        c = ClaudeClient(api_key=k, model=model, timeout=40.0, transport=transport, max_retries=1)
+        resp = c._post({"model": model, "max_tokens": 16,
+                        "messages": [{"role": "user", "content": "Responde solo: OK"}]})
+        if resp.get("type") == "error":
+            raise AIError(resp.get("error", {}).get("message", "error desconocido"))
+        _connection["ok"] = True
+    except AIError as e:
+        _connection["error"] = str(e)
+    return status()
 
 
 def parse_json(text: str) -> dict:

@@ -1,4 +1,5 @@
 import { Viewer, V3 } from './viewer.js';
+import * as aiGate from './ai_gate.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -315,23 +316,9 @@ const OPS = {
 };
 
 // ------------------------------------------------------------------ revisión por IA
-async function aiRefresh() {
-  try {
-    const st = await api('/api/ai/status', { method: 'GET' });
-    $('#ai-state').textContent = st.configured ? `Clave configurada (${st.source}: ${st.key_hint}) · modelo ${st.model}` : 'Sin clave: introdúzcala para usar la IA';
-    $('#ai-state').className = 'hint ' + (st.configured ? 'ok' : 'warn');
-    if (!$('#ai-model').value) $('#ai-model').value = st.model;
-  } catch (e) { /* sin servidor */ }
-}
-async function aiSaveKey() {
-  await run('Guardando la clave', async () => {
-    await api('/api/ai/key', { json: { key: $('#ai-key').value, model: $('#ai-model').value, persist: $('#ai-persist').checked } });
-    $('#ai-key').value = ''; await aiRefresh(); return 'Clave configurada';
-  });
-}
 function aiCut() {
   run('La IA está revisando el corte (puede tardar 1–3 min)', async () => {
-    const r = await api('/api/ai/cut', { json: { rounds: Number($('#ai-rounds').value) || 6, model: $('#ai-model').value,
+    const r = await api('/api/ai/cut', { json: { rounds: Number($('#ai-rounds').value) || 6,
       segment: getParams('segment'), cut: getParams('cut'), planes: [...S.planes] } });
     if (r.report.final_params) { setParams('segment', r.report.final_params.segment); setParams('cut', r.report.final_params.cut); }
     await fetchLabels();
@@ -350,7 +337,7 @@ function autoAll() {
     const planes = [...S.planes];
     const r = await api('/api/auto', { json: { segment: getParams('segment'), cut: getParams('cut'), smooth: getParams('smooth'),
       solid: getParams('solid'), planes, manual_b64: manualB64(), resegment: true,
-      sin_ia: noAi, rounds: Number($('#ai-rounds').value) || 6, model: $('#ai-model').value } });
+      sin_ia: noAi, rounds: Number($('#ai-rounds').value) || 6 } });
     if (r.report.ia && r.report.ia.final_params) { setParams('segment', r.report.ia.final_params.segment); setParams('cut', r.report.ia.final_params.cut); }
     await fetchLabels();
     await syncStages(r.state, 'segmentado'); paintLabels();
@@ -557,8 +544,9 @@ function bindUI() {
   $$('[data-op]').forEach((b) => { b.onclick = () => OPS[b.dataset.op](); });
   $('#op-auto').onclick = autoAll;
   $('#ai-cut').onclick = aiCut;
-  $('#ai-save').onclick = aiSaveKey;
-  aiRefresh();
+  $('#ai-config').onclick = () => aiGate.open();
+  $('#ai-off').addEventListener('change', () => aiGate.refresh());
+  aiGate.initAiGate();
   $$('.tool').forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
   $('#brush').oninput = (e) => { $('#brush-out').textContent = e.target.value + ' mm'; };
   $('#undo').onclick = () => { const e = S.undo.pop(); if (e) { S.redo.push(e); applyEdit(e, 'old'); } };
