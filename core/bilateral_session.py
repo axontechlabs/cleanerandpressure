@@ -118,7 +118,33 @@ class BilateralSession:
             self.place(stance)
         sp = SimParams.from_dict(sim)
         self.result = simulate(self.feet, self.placements, sp)
+        self._loaded = {}
+        try:
+            self._add_loaded_feet(sp)
+        except Exception as e:  # noqa: BLE001 - la expansión nunca impide la simulación
+            self.result.setdefault("warnings", []).append(f"No se ha podido calcular el pie en carga: {e}")
         return self.report()
+
+    def _add_loaded_feet(self, sp) -> None:
+        """Expansión del pie al pisar y sólido del pie en carga (expandido y aplastado)."""
+        from .loaded_foot import expansion, loaded_mesh, public
+        for s in SIDES:
+            exp = expansion(self.result, s, self.feet[s], sp)
+            solid, n = self.positioned(s)
+            self._loaded[s] = loaded_mesh(self.result, s, self.feet[s], self.placements[s], solid, n, exp)
+            self.result["feet"][s]["loaded_foot"] = public(exp)
+
+    def export_loaded(self, side: str, fmt: str = "stl") -> bytes:
+        """STL del pie en carga (un pie, o «ambos» en un solo archivo, en el marco de la simulación)."""
+        from .mesh import merge_meshes
+        from .mesh_io import export_bytes
+        if self.result is None or not getattr(self, "_loaded", None):
+            raise BilateralError("Ejecute primero la simulación.")
+        if side in ("ambos", "both"):
+            return export_bytes(merge_meshes([self._loaded[s] for s in SIDES]), fmt)
+        if side not in self._loaded:
+            raise BilateralError(f"Pie desconocido: {side}")
+        return export_bytes(self._loaded[side], fmt)
 
     def report(self) -> dict:
         if self.result is None:
@@ -146,7 +172,8 @@ class BilateralSession:
     def export_csv(self) -> bytes:
         if self.result is None:
             raise BilateralError("Ejecute primero la simulación.")
-        return pressure_csv(self.result)
+        from .report_en import csv_to_english
+        return csv_to_english(pressure_csv(self.result))
 
     def export_json(self) -> bytes:
         if self.result is None:
@@ -154,13 +181,14 @@ class BilateralSession:
         extra = {"placement": self.placement_report(),
                  "processing": self.process_reports,
                  "files": {s: self.pipes[s].name for s in SIDES}}
-        return result_json(self.result, extra)
+        from .report_en import json_to_english
+        return json_to_english(result_json(self.result, extra))
 
     def map_png(self, which: str = "bilateral") -> bytes:
         if self.result is None:
             raise BilateralError("Ejecute primero la simulación.")
         from .pressure_maps import render_map
-        return render_map(self.result, which)
+        return render_map(self.result, which, lang="en")
 
     def state(self) -> dict:
         return {

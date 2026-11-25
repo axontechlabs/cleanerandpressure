@@ -28,11 +28,28 @@ def nice_max(v: float) -> float:
     return float(10 * e)
 
 
-def render_map(result: dict, which: str = "bilateral", dpi: int = 150) -> bytes:
+TXT = {
+    "es": {"side": {"izquierdo": "Izquierdo", "derecho": "Derecho"}, "max": "máx.",
+           "title_bi": "Presión plantar · bipedestación estática bilateral", "title_one": "Presión plantar · pie {s}",
+           "sub_bi": "{m:.1f} kg · {w:.0f} N · reparto I/D {l:.1f} / {r:.1f} %",
+           "sub_one": "{f:.0f} N ({p:.1f} % del peso) · escala común con el mapa bilateral",
+           "cbar": "Presión (kPa)", "leg_foot": "+  centro de presiones del pie", "leg_glob": "○  centro de presiones global",
+           "sim": "Simulación (no es una medición)"},
+    "en": {"side": {"izquierdo": "Left", "derecho": "Right"}, "max": "peak",
+           "title_bi": "Plantar pressure · bilateral static standing", "title_one": "Plantar pressure · {s} foot",
+           "sub_bi": "{m:.1f} kg · {w:.0f} N · L/R split {l:.1f} / {r:.1f} %",
+           "sub_one": "{f:.0f} N ({p:.1f} % of body weight) · same scale as the bilateral map",
+           "cbar": "Pressure (kPa)", "leg_foot": "+  foot centre of pressure", "leg_glob": "○  overall centre of pressure",
+           "sim": "Simulation (not a measurement)"},
+}
+
+
+def render_map(result: dict, which: str = "bilateral", dpi: int = 150, lang: str = "es") -> bytes:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    T = TXT.get(lang, TXT["es"])
     arr = result["_arrays"]
     grid = arr["grid"]
     xs, ys = grid.node_xy()
@@ -72,8 +89,8 @@ def render_map(result: dict, which: str = "bilateral", dpi: int = 150) -> bytes:
         m = masks[s]
         mi, mj = np.nonzero(m)
         tx = xs[mi].mean()
-        ax.text(tx, ys[mj].min() - 7, f"{s.capitalize()}\n{f['pct_body']:.1f} % · {f['force_N']:.0f} N\n"
-                f"máx. {f['peak_kPa']:.0f} kPa · {f['contact_area_cm2']:.0f} cm²",
+        ax.text(tx, ys[mj].min() - 7, f"{T['side'][s]}\n{f['pct_body']:.1f} % · {f['force_N']:.0f} N\n"
+                f"{T['max']} {f['peak_kPa']:.0f} kPa · {f['contact_area_cm2']:.0f} cm²",
                 color="white", ha="center", va="top", fontsize=9)
     if which == "bilateral":
         gx, gy = result["global"]["cop_world_mm"]
@@ -84,23 +101,22 @@ def render_map(result: dict, which: str = "bilateral", dpi: int = 150) -> bytes:
     ax.set_aspect("equal")
     ax.axis("off")
     g = result["global"]
-    title = ("Presión plantar · bipedestación estática bilateral" if which == "bilateral"
-             else f"Presión plantar · pie {which}")
-    sub = (f"{g['mass_kg']:.1f} kg · {g['weight_N']:.0f} N · reparto I/D {g['split_left_pct']:.1f} / "
-           f"{g['split_right_pct']:.1f} %" if which == "bilateral" else
-           f"{feet[which]['force_N']:.0f} N ({feet[which]['pct_body']:.1f} % del peso) · escala común con el mapa bilateral")
+    title = (T["title_bi"] if which == "bilateral" else T["title_one"].format(s=T["side"][which].lower()))
+    sub = (T["sub_bi"].format(m=g["mass_kg"], w=g["weight_N"], l=g["split_left_pct"], r=g["split_right_pct"])
+           if which == "bilateral" else
+           T["sub_one"].format(f=feet[which]["force_N"], p=feet[which]["pct_body"]))
     fig.text(0.03, 0.965, title, color="white", fontsize=12, weight="bold", va="top")
     fig.text(0.03, 0.93, sub, color="#cfcfcf", fontsize=9, va="top")
     cax = fig.add_axes([0.86, 0.14, 0.035, 0.72])
     cb = fig.colorbar(im, cax=cax)
-    cb.set_label("Presión (kPa)", color="white")
+    cb.set_label(T["cbar"], color="white")
     cb.ax.yaxis.set_tick_params(color="white")
     for t in cb.ax.get_yticklabels():
         t.set_color("white")
     cb.outline.set_edgecolor("#888888")
-    legend = "+  centro de presiones del pie" + ("\n○  centro de presiones global" if which == "bilateral" else "")
+    legend = T["leg_foot"] + ("\n" + T["leg_glob"] if which == "bilateral" else "")
     fig.text(0.03, 0.03, legend, color="#cfcfcf", fontsize=8, va="bottom")
-    fig.text(0.97, 0.03, "Simulación (no es una medición)", color="#8a8a8a", fontsize=7, ha="right", va="bottom")
+    fig.text(0.97, 0.03, T["sim"], color="#8a8a8a", fontsize=7, ha="right", va="bottom")
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, facecolor="black")
     plt.close(fig)

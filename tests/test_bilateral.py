@@ -311,11 +311,12 @@ def test_exports(session):
         png = session.map_png(w)
         assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 20000
     rows = list(csv.reader(io.StringIO(session.export_csv().decode())))
-    assert rows[0][:6] == ["pie", "x_mm", "y_mm", "x_local_mm", "y_local_mm", "presion_kPa"]
-    assert {r[0] for r in rows[1:]} == set(SIDES)
+    # resultados exportados en inglés
+    assert rows[0][:6] == ["side", "x_mm", "y_mm", "x_local_mm", "y_local_mm", "pressure_kPa"]
+    assert {r[0] for r in rows[1:]} == {"left", "right"}
     data = json.loads(session.export_json())
     assert {"global", "feet", "comparison", "tissue", "placement", "processing"} <= set(data)
-    assert data["global"]["split_source"].startswith("hipótesis")
+    assert data["global"]["split_source"].startswith("user-supplied assumption")
 
 
 def test_regional_properties_change_only_their_foot(session):
@@ -369,6 +370,6 @@ def test_bilateral_web_api(pair):
         fp = np.frombuffer(call("/api/bi/facepressure/izquierdo"), dtype="<f4")
         assert len(fp) == head[2] and fp.max() > 0
         assert call("/api/bi/map/bilateral.png")[:4] == b"\x89PNG"
-        assert call("/api/bi/export/csv").startswith(b"pie,")
+        assert call("/api/bi/export/csv").startswith(b"side,")
     finally:
         server.should_exit = True

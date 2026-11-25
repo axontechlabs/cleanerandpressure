@@ -129,6 +129,14 @@ Elija etapa, formato y orientación (*la del escaneo* o *base apoyada en Z=0*). 
 solo se exporta si ha superado todas las comprobaciones**; en caso contrario la aplicación lo
 indica y no lo presenta como válido. *Archivo original intacto* descarga la copia sin modificar.
 
+## Pie en carga y resultados en inglés
+
+- Tras simular, cada pie trae su **expansión en carga** (longitud, anchura del antepié y del talón,
+  descenso del arco), adaptada al pie y al peso, y el **STL del pie en carga** (expandido y
+  aplastado): *Exportación → STL en carga*. Detalles: [docs/BILATERAL.md](docs/BILATERAL.md).
+- Los archivos de resultados (mapas PNG, CSV, JSON y STL) se exportan **en inglés**; la interfaz
+  sigue en castellano.
+
 ## Corte de plantilla y revisión por IA
 
 - **Tipo de corte** (Parámetros → Segmentación y corte de plantilla): `plantilla` (por defecto) o

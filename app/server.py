@@ -272,8 +272,10 @@ async def export(request: Request):
     res, err = await _run(pipe.export, stage, fmt, frame)
     if err:
         return err
-    base = Path(pipe.name or "modelo").stem
-    fname = f"{base}_{stage}.{fmt}"
+    base = Path(pipe.name or "model").stem
+    stage_en = {"original": "original", "segmentado": "segmented", "recortado": "trimmed", "suavizado": "smoothed",
+                "solido": "solid"}.get(stage, stage)
+    fname = f"{base}_{stage_en}.{fmt}"           # resultados en inglés
     return Response(res, media_type="application/octet-stream",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
