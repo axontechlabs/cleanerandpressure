@@ -148,7 +148,10 @@ function refreshButtons() {
   for (const w of ['bilateral', ...SIDES]) {
     const a = $(`#ex-png-${w}`); a.classList.toggle('off', !sim); a.href = sim ? `/api/bi/map/${w}.png?download=1` : '#';
   }
-  for (const [id, path] of [['#ex-csv', '/api/bi/export/csv'], ['#ex-json', '/api/bi/export/json']]) {
+  for (const [id, path] of [['#ex-csv', '/api/bi/export/csv'], ['#ex-json', '/api/bi/export/json'],
+    ['#ex-loaded-izquierdo', '/api/bi/export/loaded_izquierdo?fmt=stl'], ['#ex-loaded-derecho', '/api/bi/export/loaded_derecho?fmt=stl'],
+    ['#ex-loaded-ambos', '/api/bi/export/loaded_ambos?fmt=stl']]) {
+    if (!$(id)) continue;
     $(id).classList.toggle('off', !sim); $(id).href = sim ? path : '#';
   }
 }
@@ -244,6 +247,17 @@ function renderReport() {
           + `<td>${fmt(t.pct_foot, 1)}</td><td>${fmt(t.contact_area_cm2, 1)}</td><td>${fmt(t.peak_kPa, 0)}</td>`
           + `<td>${fmt(t.rest_deg, 0)}°</td></tr>`).join('') + '</table>'
         + '<div class="hint">Giro: el que necesita cada dedo en su articulación MTF, desde la postura del escaneo, para apoyar en el suelo.</div>';
+    const lf = f.loaded_foot;
+    if (lf) {
+      const c = lf.change_mm, pc = lf.change_pct, u = lf.unloaded, l = lf.loaded;
+      h += '<table class="cmp"><tr><th>Pie en carga</th><th>sin carga</th><th>en carga</th><th>cambio</th></tr>'
+        + [['Longitud', u.length_mm, l.length_mm, c.length, pc.length],
+           ['Anchura del antepié', u.ball_width_mm, l.ball_width_mm, c.ball_width, pc.ball_width],
+           ['Anchura del talón', u.heel_width_mm, l.heel_width_mm, c.heel_width, pc.heel_width]]
+          .map(([n, a, b, d, p]) => `<tr><td>${n}</td><td>${fmt(a, 1)} mm</td><td>${fmt(b, 1)} mm</td><td>+${fmt(d, 1)} mm (${fmt(p, 1)} %)</td></tr>`).join('')
+        + `<tr><td>Descenso del arco</td><td></td><td></td><td>${fmt(c.arch_drop, 1)} mm</td></tr></table>`
+        + `<div class="hint">${lf.loaded_scan ? 'El escaneo ya estaba en carga: no se añade expansión.' : `Estimación adaptada a este pie y a su carga (${fmt(lf.drivers.foot_load_N, 0)} N): medias de la literatura (longitud +${fmt(lf.literature_mean_pct.length, 2)} %, antepié +${fmt(lf.literature_mean_pct.ball_width, 2)} %, talón +${fmt(lf.literature_mean_pct.heel_width, 2)} %) escaladas con el descenso del arco y la compresión del tejido simulados.`} STL del pie en carga en «Exportación».</div>`;
+    }
   }
   h += '<h3>Comparación izquierdo / derecho</h3><table class="cmp"><tr><th>Indicador</th><th>Izq.</th><th>Der.</th><th>Dif.</th><th>Asim. %</th></tr>'
     + r.comparison.map((c) => `<tr><td>${c.name}${c.unit ? ` <small>(${c.unit})</small>` : ''}</td><td>${fmt(c.left, c.unit ? 1 : 2)}</td>`

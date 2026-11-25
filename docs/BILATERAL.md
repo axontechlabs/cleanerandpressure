@@ -430,3 +430,40 @@ Con ello, en bipedestación estática los dedos aparecen como 4–6 manchas y su
 30–45 % del máximo del pie (referencia en plataforma: hallux ≈ 20–26 %, 2.º dedo ≈ 18–24 %,
 3.º–5.º ≈ 13–16 %; Symmetry 2021, 13(8):1476). La revisión por IA puede reajustar estos parámetros y
 el tejido por región (ver [IA.md](IA.md)).
+
+## Pie en carga: expansión y aplastamiento (noviembre 2026)
+
+Al pisar, el pie se alarga, se ensancha y se aplasta. Tras cada simulación se estima, para cada pie,
+cuánto, y se genera el **STL del pie en carga** (expandido y aplastado), en el marco de la simulación
+(suelo z = 0). Código: `core/loaded_foot.py`.
+
+**Referencia (literatura).** Media de tres estudios con escáner 3D (Houston et al.; Tsung et al.
+2003; Xiong et al. 2009; recopilados en J Foot Ankle Res 2010, 3:19), carga completa frente a
+descarga: longitud +1,95 % (estudios: +1,4 % a +3,4 %), anchura del antepié +3,66 % (+2,6 % a +6 %),
+anchura del talón +3,68 % (+1,6 % a +8,7 %). De media a carga completa se alcanza ≈ 78 % de la
+expansión total: la deformación crece menos que proporcionalmente con la carga (exponente ≈ 1/3).
+
+**Adaptado a cada pie y peso.** Las medias se escalan con lo que la simulación calcula para ese pie:
+
+| Cambio | Lo produce | Escala con |
+|---|---|---|
+| Longitud | el arco se aplana y se alarga | (descenso del arco simulado / típico para esa longitud)^0,5 × (carga del pie / 343 N)^(1/3) |
+| Anchura del antepié | el tejido se aplasta y se abomba; los metatarsianos se abren | (compresión del tejido del antepié simulada / referencia)^0,7 |
+| Anchura del talón | la almohadilla del talón se expande | (compresión del talón simulada / referencia)^0,7 |
+
+Referencia de compresión: la de la simulación a 70 kg repartidos 50/50 (≈ 46 % del espesor del
+tejido). Así, más peso, un arco más móvil (caída del navicular indicada) o un tejido más blando dan
+más expansión. Si el escaneo ya se tomó en carga, no se añade expansión.
+
+**STL del pie en carga.** La planta queda exactamente como en la simulación (plana sobre el suelo
+donde toca; el resto baja con el arco, los dedos asentados y la compresión del tejido) y la huella se
+expande en planta: el talón queda fijo, el arco se estira y lo anterior avanza ΔL; la anchura crece
+del talón al antepié alrededor de la línea media de la huella. Es una estimación, no una medición.
+
+## Resultados en inglés
+
+Los archivos de resultados se exportan en inglés: mapas PNG, CSV (`side`, `pressure_kPa`…), JSON
+(`left`/`right`, regiones, avisos) y nombres de archivo (`pressure_map_bilateral.png`,
+`bilateral_results.json`, `loaded_foot_left.stl`…). La interfaz sigue en castellano. Los textos que
+no cubren las tablas de traducción (`core/report_en.py`) se traducen con Claude si la IA está
+conectada.

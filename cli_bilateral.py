@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+
+EN = {"izquierdo": "left", "derecho": "right", "bilateral": "bilateral", "ambos": "both"}
 import sys
 from pathlib import Path
 
@@ -69,7 +71,7 @@ def main(argv=None) -> int:
         if not all(r["valid"] for r in proc.values()):
             return 2
         for side in ("izquierdo", "derecho"):
-            (out / f"pie_{side}_limpio.stl").write_bytes(s.export_stl(side))
+            (out / f"foot_{EN[side]}_clean.stl").write_bytes(s.export_stl(side))
         stance = {"heel_separation": a.separacion, "height_cm": a.estatura, "toe_out_left": a.apertura[0], "toe_out_right": a.apertura[1],
                   "load_point": a.linea_carga / 100.0, **cfg.get("postura", {})}
         sim = {"mass": a.peso, "split_left": a.reparto_izquierdo, "load_point": a.linea_carga / 100.0,
@@ -86,9 +88,11 @@ def main(argv=None) -> int:
             rep = s.report()
             print(f"IA: {ia['usage']['calls']} llamada(s) ({ia['model']})")
         for w in ("bilateral", "izquierdo", "derecho"):
-            (out / f"mapa_presion_{w}.png").write_bytes(s.map_png(w))
-        (out / "presiones_bilateral.csv").write_bytes(s.export_csv())
-        (out / "resultados_bilateral.json").write_bytes(s.export_json())
+            (out / f"pressure_map_{EN[w]}.png").write_bytes(s.map_png(w))
+        (out / "bilateral_pressures.csv").write_bytes(s.export_csv())
+        (out / "bilateral_results.json").write_bytes(s.export_json())
+        for side in ("izquierdo", "derecho", "ambos"):
+            (out / f"loaded_foot_{EN[side]}.stl").write_bytes(s.export_loaded(side))
         g = rep["global"]
         print(f"Peso {g['weight_N']:.1f} N · pies {g['feet_force_N']:.1f} N · reparto I/D "
               f"{g['split_left_pct']:.1f}/{g['split_right_pct']:.1f} % · máx. {g['peak_kPa']:.0f} kPa · "

@@ -1251,7 +1251,7 @@ def simulate(feet: dict[str, FootGeometry], placements: dict[str, Placement], sp
                                         else "según la longitud del pie (Nielsen et al., 2009)")
     P = {sd: sols[sd]["p"] for sd in SIDES}
     result = _report(feet, placements, fields, P, sols, grid, sp, W, frac, com_used, warnings)
-    result["_arrays"] = {"grid": grid, "pressure": P, "fields": fields}
+    result["_arrays"] = {"grid": grid, "pressure": P, "fields": fields, "sols": sols, "drops": drops}
     return result
 
 

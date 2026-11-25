@@ -269,3 +269,42 @@ def test_connection_check_at_startup(monkeypatch, tmp_path):
     ai_client.set_api_key(None, model="claude-opus-5-5", persist=True)
     assert ai_client.get_api_key() == "sk-ant-prueba-9999" and ai_client.get_model() == "claude-opus-5-5"
     assert not ai_client.status()["connected"]          # hay que volver a comprobar con el modelo nuevo
+
+
+# ------------------------------------------------------------------ pie en carga e informes en inglés
+def test_loaded_foot_expansion_and_english_exports(flat_toes_session):
+    import re
+    from core.mesh_io import load_stl_bytes
+    from core.mesh_validation import validate_solid
+    s = flat_toes_session
+    ch = {}
+    for mass in (55.0, 70.0, 100.0):
+        rep = s.simulate({"mass": mass})
+        lf = rep["feet"]["izquierdo"]["loaded_foot"]
+        ch[mass] = lf["change_pct"]
+    # a 70 kg y 50/50 (referencia) queda en el orden de las medias publicadas
+    assert 1.0 < ch[70.0]["length"] < 3.5
+    assert 1.5 < ch[70.0]["ball_width"] < 6.0 and 1.5 < ch[70.0]["heel_width"] < 8.0
+    # más peso, más expansión (menos que proporcional)
+    assert ch[55.0]["length"] < ch[70.0]["length"] < ch[100.0]["length"] < 1.6 * ch[70.0]["length"]
+    assert ch[55.0]["ball_width"] < ch[100.0]["ball_width"]
+    # el escaneo ya en carga no se expande
+    rep = s.simulate({"mass": 70.0, "loaded_scan": True})
+    assert rep["feet"]["derecho"]["loaded_foot"]["change_mm"]["length"] == 0.0
+    rep = s.simulate({"mass": 70.0})
+    # STL del pie en carga: sólido válido, apoyado en el suelo y más largo
+    from core.mesh_cleaning import clean
+    m = load_stl_bytes(s.export_loaded("izquierdo"))
+    assert validate_solid(clean(m)[0])["valid"]
+    both = load_stl_bytes(s.export_loaded("ambos"))
+    assert both.n_faces == 2 * m.n_faces or abs(both.n_faces - m.n_faces * 2) < 0.2 * m.n_faces
+    un, n = s.positioned("izquierdo")
+    assert m.vertices[:, 2].min() > -1e-6
+    assert np.ptp(m.vertices[:, 1]) > np.ptp(un.vertices[:, 1]) + 2.0
+    # resultados exportados en inglés
+    data = json.loads(s.export_json())
+    assert set(data["feet"]) == {"left", "right"} and "loaded_foot" in data["feet"]["left"]
+    txt = json.dumps(data, ensure_ascii=False)
+    assert not re.search(r"[áéíóúñ]", txt), re.findall(r".{30}[áéíóúñ].{30}", txt)[:5]
+    head = s.export_csv().decode().splitlines()[:2]
+    assert head[0].startswith("side,") and "pressure_kPa" in head[0] and head[1].split(",")[0] in ("left", "right")

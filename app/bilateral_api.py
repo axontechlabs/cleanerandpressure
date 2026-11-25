@@ -14,6 +14,8 @@ from core import synthetic
 from core import ai_client
 from core.ai_client import AIError
 from core.bilateral import SIDES, BilateralError
+
+EN_NAME = {"izquierdo": "left", "derecho": "right", "bilateral": "bilateral", "ambos": "both"}
 from core.bilateral_session import BilateralSession
 from core.mesh_io import stl_bytes
 from core.pipeline import PipelineError
@@ -126,7 +128,7 @@ def make_routes(static_dir, workspace, json_response, body_json):
             return err
         headers = {"Cache-Control": "no-store"}
         if request.query_params.get("download"):
-            headers["Content-Disposition"] = f'attachment; filename="mapa_presion_{which}.png"'
+            headers["Content-Disposition"] = f'attachment; filename="pressure_map_{EN_NAME[which]}.png"'
         return Response(res, media_type="image/png", headers=headers)
 
     async def export(request: Request):
@@ -136,13 +138,18 @@ def make_routes(static_dir, workspace, json_response, body_json):
             if fmt not in ("stl", "obj", "ply"):
                 return json_response({"error": "Formato no admitido."}, 400)
             res, err = await run(session.export_stl, what, fmt)
-            fname, mt = f"pie_{what}_limpio.{fmt}", "application/octet-stream"
+            fname, mt = f"foot_{EN_NAME[what]}_clean.{fmt}", "application/octet-stream"
+        elif what.startswith("loaded_") and what[7:] in SIDES + ("ambos",):
+            if fmt not in ("stl", "obj", "ply"):
+                return json_response({"error": "Formato no admitido."}, 400)
+            res, err = await run(session.export_loaded, what[7:], fmt)
+            fname, mt = f"loaded_foot_{EN_NAME[what[7:]]}.{fmt}", "application/octet-stream"
         elif what == "csv":
             res, err = await run(session.export_csv)
-            fname, mt = "presiones_bilateral.csv", "text/csv"
+            fname, mt = "bilateral_pressures.csv", "text/csv"
         elif what == "json":
             res, err = await run(session.export_json)
-            fname, mt = "resultados_bilateral.json", "application/json"
+            fname, mt = "bilateral_results.json", "application/json"
         else:
             return json_response({"error": "Exportación desconocida."}, 404)
         return err or Response(res, media_type=mt, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
