@@ -63,8 +63,12 @@ function buildTissueTable() {
   $('#tissue').innerHTML = h;
 }
 
-const num = (id) => parseFloat($(id).value);
-const opt = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
+// tolerantes: si falta un campo (p. ej. una página antigua en caché) no se rompe la simulación
+const num = (id) => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return Number.isFinite(v) ? v : undefined; };
+const opt = (id) => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return Number.isFinite(v) ? v : null; };
+const val = (id, d) => { const e = $(id); return e ? e.value : d; };
+const chk = (id) => { const e = $(id); return !!(e && e.checked); };
+const aiBody = () => ({ sin_ia: chk('#ai-off'), rounds: num('#ai-rounds') || 6 });
 
 function stanceParams() {
   return {
@@ -76,14 +80,14 @@ function stanceParams() {
 function simParams() {
   const tissue = { izquierdo: {}, derecho: {} };
   $$('#tissue input').forEach((i) => {
-    const t = tissue[i.dataset.side];
-    (t[i.dataset.reg] ||= {})[i.dataset.q] = parseFloat(i.value);
+    const t = tissue[i.dataset.side], v = parseFloat(i.value);
+    if (t && Number.isFinite(v)) (t[i.dataset.reg] ||= {})[i.dataset.q] = v;
   });
   return {
-    mass: num('#mass'), mode: $('#mode').value, split_left: num('#split'),
+    mass: num('#mass'), mode: val('#mode', 'reparto'), split_left: num('#split'),
     com_x: num('#com_x'), com_y_frac: num('#com_y') / 100, load_point: num('#load_point') / 100,
     nonlinearity_scale: num('#nonlinearity_scale'), spread: num('#spread'), contact_threshold: num('#contact_threshold'),
-    arch_drop: opt('#arch_drop'), height_cm: opt('#height_cm'), loaded_scan: $('#loaded_scan').checked,
+    arch_drop: opt('#arch_drop'), height_cm: opt('#height_cm'), loaded_scan: chk('#loaded_scan'),
     toe_flexor: num('#toe_flexor'), toe_max_flexion: num('#toe_max_flexion'),
     toe_definition: num('#toe_definition'), toe_pulp_lift: num('#toe_pulp_lift'), toe_spread: num('#toe_spread'),
     stiffness_scale: { izquierdo: num('#stiff-izquierdo'), derecho: num('#stiff-derecho') }, tissue,
@@ -155,6 +159,10 @@ function renderProcessing() {
     if (!r) continue;
     h += `<div class="foot-proc ${r.valid ? 'ok' : 'bad'}"><b>Pie ${s}</b>: ${r.valid ? 'sólido válido' : 'NO válido'}`
       + ` · ${fmt(r.volume_cm3, 0)} cm³ · ${r.seconds} s`;
+    if (r.ia && r.ia.history && r.ia.history.length) {
+      const last = r.ia.history[r.ia.history.length - 1];
+      h += `<div class="hint">IA: ${r.ia.history.length} ronda(s) · ${last.verdict === 'correcto' ? 'corte dado por bueno' : 'última ronda: ' + (last.verdict || '')} — ${last.diagnosis || ''}</div>`;
+    }
     if (r.failed_checks && r.failed_checks.length) h += `<div class="hint">Falla: ${r.failed_checks.join(', ')}</div>`;
     for (const w of (r.warnings || []).slice(0, 3)) h += `<div class="msg warn">${w}</div>`;
     h += `<div class="row"><a class="btn small" href="/api/bi/export/${s}?fmt=stl">STL</a>`
@@ -362,9 +370,10 @@ function wire() {
     const d = await api('/api/bi/swap', null); S.state = d.state; S.report = null; S.placement = null;
     renderProcessing(); renderReport(); showMap(); status('Pies intercambiados', 'ok');
   });
-  $('#process').onclick = () => busy('Procesando los dos escaneos', async () => {
-    const d = await api('/api/bi/process', {}); S.state = d.state; S.report = null; S.placement = null;
+  $('#process').onclick = () => busy(chk('#ai-off') ? 'Procesando los dos escaneos' : 'Procesando los dos escaneos; la IA revisa y reajusta el corte de cada pie (varios minutos)', async () => {
+    const d = await api('/api/bi/process', aiBody()); S.state = d.state; S.report = null; S.placement = null;
     renderProcessing(); renderReport(); showMap();
+    if (!chk('#ai-off')) aiLog(SIDES.map((s) => [`Corte pie ${s}`, (d.report[s].ia || {}).history]));
     const ok = SIDES.every((s) => d.report[s].valid);
     status(ok ? 'Dos sólidos válidos e independientes' : 'Algún sólido no es válido: revíselo antes de simular', ok ? 'ok' : 'err');
   });
@@ -374,9 +383,10 @@ function wire() {
     const w = [...(d.report.stance.warnings || []), ...SIDES.flatMap((s) => d.report.feet[s].warnings || [])];
     status(w.length ? 'Pies colocados, con avisos (ver informe)' : 'Pies colocados en el suelo común', w.length ? 'warn' : 'ok');
   });
-  $('#simulate').onclick = () => busy('Simulando la bipedestación bilateral', async () => {
-    const d = await api('/api/bi/simulate', { sim: simParams(), stance: stanceParams() });
+  $('#simulate').onclick = () => busy(chk('#ai-off') ? 'Simulando la bipedestación bilateral' : 'Simulando; la IA revisa y reajusta el mapa de presión (varios minutos)', async () => {
+    const d = await api('/api/bi/simulate', { sim: simParams(), stance: stanceParams(), ...aiBody() });
     S.state = d.state; S.report = d.report; S.placement = d.report.placement;
+    if (d.report.ia) { applySim(d.report.ia.final_params); aiLog([['Mapa de presión', d.report.ia.history]]); }
     renderReport(); refreshButtons(); setTab('map'); showMap();
     await loadMeshes(); await paintPressure(); setTab('map');
     const g = d.report.global;
@@ -388,14 +398,14 @@ function wire() {
     $('#ai-key').value = ''; await aiRefresh(); status('Clave configurada', 'ok');
   });
   $('#ai-cut').onclick = () => busy('La IA está revisando el corte de los dos pies (unos minutos)', async () => {
-    const d = await api('/api/bi/ai/cut', { rounds: num('#ai-rounds') }); S.state = d.state; S.report = null; S.placement = null;
+    const d = await api('/api/bi/ai/cut', { rounds: num('#ai-rounds') || 6 }); S.state = d.state; S.report = null; S.placement = null;
     renderProcessing(); renderReport(); showMap();
     aiLog(SIDES.map((s) => [`Corte pie ${s}`, d.report[s].history]));
     const ok = SIDES.every((s) => d.report[s].validacion.valid);
     status(ok ? 'Corte revisado por IA: dos sólidos válidos' : 'Corte revisado, pero algún sólido no es válido', ok ? 'ok' : 'err');
   });
   $('#ai-pressure').onclick = () => busy('La IA está revisando el mapa de presión (unos minutos)', async () => {
-    const d = await api('/api/bi/ai/pressure', { rounds: num('#ai-rounds'), sim: simParams(), stance: stanceParams() });
+    const d = await api('/api/bi/ai/pressure', { rounds: num('#ai-rounds') || 6, sim: simParams(), stance: stanceParams() });
     S.state = d.state; S.report = d.report; S.placement = d.report.placement;
     applySim(d.report.ia.final_params);
     renderReport(); refreshButtons(); setTab('map'); showMap();

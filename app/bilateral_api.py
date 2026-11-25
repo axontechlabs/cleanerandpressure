@@ -61,9 +61,19 @@ def make_routes(static_dir, workspace, json_response, body_json):
         res, err = await run(session.swap)
         return err or json_response(with_state({}))
 
+    def _client(body):
+        """La IA forma parte del proceso salvo que se pida expresamente «sin IA»."""
+        if body.get("sin_ia"):
+            return None
+        from core.ai_tuner import require_client
+        return require_client(body.get("model") or None)
+
     async def process(request: Request):
         body = await body_json(request)
-        res, err = await run(session.process, body.get("params"))
+
+        def do():
+            return session.process(body.get("params"), _client(body), int(body.get("rounds", 6)))
+        res, err = await run(do)
         return err or json_response(with_state(res))
 
     async def place(request: Request):
@@ -73,7 +83,16 @@ def make_routes(static_dir, workspace, json_response, body_json):
 
     async def simulate(request: Request):
         body = await body_json(request)
-        res, err = await run(session.simulate, body.get("sim"), body.get("stance"))
+
+        def do():
+            client = _client(body)
+            rep = session.simulate(body.get("sim"), body.get("stance"))
+            if client is None:
+                return rep
+            from core.ai_tuner import tune_pressure
+            ia = tune_pressure(session, client, rounds=int(body.get("rounds", 6)), sim=body.get("sim"))
+            return {**session.report(), "ia": ia}
+        res, err = await run(do)
         return err or json_response(with_state(res))
 
     async def state(request: Request):

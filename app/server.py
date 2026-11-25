@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import FileResponse, Response
@@ -197,7 +198,12 @@ async def auto(request: Request):
     def do():
         if manual is not None and pipe.work is not None and len(manual) == pipe.work.n_faces:
             pipe.manual = manual.copy()
-        return pipe.auto(body)
+        if body.get("sin_ia") or (body.get("segment") or {}).get("mode") == "planta":
+            return pipe.auto(body)
+        # La IA forma parte del proceso: revisa el corte y reajusta hasta darlo por bueno.
+        from core.ai_tuner import auto_with_ai, require_client
+        client = require_client(body.get("model") or None)
+        return auto_with_ai(pipe, client, body, rounds=int(body.get("rounds", 6)))
     res, err = await _run(do)
     return err or _json(_with_state(res))
 
@@ -344,4 +350,23 @@ from app.bilateral_api import make_routes  # noqa: E402
 routes += make_routes(STATIC, WORKSPACE, _json, _body_json)
 routes.append(Mount("/static", StaticFiles(directory=STATIC), name="static"))
 
-app = Starlette(routes=routes)
+class _NoCacheStatic:
+    """Tras actualizar el código, el navegador no debe mezclar HTML nuevo con JavaScript viejo."""
+
+    def __init__(self, app_):
+        self.app = app_
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/static/"):
+            return await self.app(scope, receive, send)
+
+        async def send2(message):
+            if message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"cache-control"]
+                headers.append((b"cache-control", b"no-cache"))
+                message = {**message, "headers": headers}
+            await send(message)
+        return await self.app(scope, receive, send2)
+
+
+app = Starlette(routes=routes, middleware=[Middleware(_NoCacheStatic)])
