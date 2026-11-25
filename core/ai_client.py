@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -34,6 +35,21 @@ _connection: dict = {"ok": False, "error": None, "checked_key": None, "checked_m
 MODELS = (("claude-sonnet-5-5", "Claude Sonnet 5.5 (recomendado)"),
           ("claude-opus-5-5", "Claude Opus 5.5 (más capaz, más caro)"),
           ("claude-haiku-5-5", "Claude Haiku 5.5 (más barato)"))
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Certificados raíz de ``certifi`` si está instalado.
+
+    El Python descargado de python.org en macOS no usa los certificados del sistema y falla con
+    «CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate»; ``certifi`` lo evita.
+    """
+    ctx = ssl.create_default_context()             # los del sistema (y los de un proxy corporativo)
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())   # más los de certifi
+    except Exception:  # noqa: BLE001 - sin certifi, solo los del sistema
+        pass
+    return ctx
 
 
 class AIError(RuntimeError):
@@ -190,7 +206,7 @@ class ClaudeClient:
         last = None
         for attempt in range(self.max_retries + 1):
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                with urllib.request.urlopen(req, timeout=self.timeout, context=_ssl_context()) as r:
                     return json.loads(r.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", "replace")
@@ -212,6 +228,10 @@ class ClaudeClient:
                 raise AIError(f"Error de la API ({e.code}): {msg}") from e
             except urllib.error.URLError as e:
                 last = str(e.reason)
+                if "CERTIFICATE_VERIFY_FAILED" in last:
+                    raise AIError("Este Python no tiene los certificados para HTTPS. Cierre el programa y "
+                                  "ejecute:  .venv/bin/pip install certifi  (o abra «Install Certificates.command» "
+                                  "en la carpeta de Python de Aplicaciones) y vuelva a abrirlo.") from e
                 if attempt < self.max_retries:
                     time.sleep(3.0)
                     continue

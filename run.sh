@@ -5,7 +5,7 @@
 #   ./run.sh --host 0.0.0.0 --no-browser  -> Codespaces / Docker / red local
 set -euo pipefail
 cd "$(dirname "$0")"
-if [ ! -x .venv/bin/python ] || ! .venv/bin/python -c "import numpy, scipy, starlette, uvicorn, matplotlib" 2>/dev/null; then
+if [ ! -x .venv/bin/python ] || ! .venv/bin/python -c "import numpy, scipy, starlette, uvicorn, matplotlib, certifi" 2>/dev/null; then
   bash ./install.sh
 fi
 exec .venv/bin/python -m app.main "$@"
