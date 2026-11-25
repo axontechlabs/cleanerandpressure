@@ -193,3 +193,42 @@ def test_ai_client_requires_key(monkeypatch, tmp_path):
     assert st["configured"] and (tmp_path / ".env").read_text().startswith("ANTHROPIC_API_KEY=sk-ant-prueba-1234")
     monkeypatch.setattr(ai_client, "_runtime_key", None)
     assert ai_client.get_api_key() == "sk-ant-prueba-1234"        # se lee del .env
+
+
+def test_default_process_runs_ai_inside_cut_and_pressure(monkeypatch):
+    """Proceso por defecto con IA: el corte de cada pie y la presión se revisan dentro del proceso."""
+    from core.ai_tuner import auto_with_ai, tune_pressure
+    ok = json.dumps({"veredicto": "correcto", "diagnostico": "bien", "cambios": {}})
+    fix = json.dumps({"veredicto": "ajustar", "diagnostico": "copa baja",
+                      "cambios": {"segment": {"heel_cup": 18}}})
+    transport, calls = _fake([fix, ok])
+    client = ClaudeClient(transport=transport)
+    sc = S.make_scenario("limpio", ns=140, nt=70)
+    pipe = Pipeline()
+    pipe.load(stl_bytes(sc.mesh), "x.stl")
+    out = auto_with_ai(pipe, client, {}, rounds=6)
+    assert out["validacion"]["valid"] and pipe.has("solido")
+    assert [e["verdict"] for e in out["ia"]["history"]] == ["ajustar", "correcto"]
+    assert pipe.reports["segmentacion"]["params"]["heel_cup"] == 18.0
+    # bilateral: process(..., ai_client) revisa los dos pies
+    left, right = S.make_foot_pair(ns=140, nt=70)
+    s = BilateralSession()
+    s.load("izquierdo", stl_bytes(left), "i.stl")
+    s.load("derecho", stl_bytes(right), "d.stl")
+    t2, calls2 = _fake([ok])
+    rep = s.process(None, ClaudeClient(transport=t2), 6)
+    assert all(rep[x]["valid"] and rep[x]["ia"]["history"] for x in SIDES) and len(calls2) == 2
+    s.simulate({"mass": 70})
+    t3, calls3 = _fake([ok])
+    ia = tune_pressure(s, ClaudeClient(transport=t3), rounds=6, sim={"mass": 70})
+    assert len(calls3) == 1 and ia["history"][0]["verdict"] == "correcto"
+
+
+def test_ai_required_without_key(monkeypatch, tmp_path):
+    from core import ai_client
+    from core.ai_tuner import require_client
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(ai_client, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.setattr(ai_client, "_runtime_key", None)
+    with pytest.raises(AIError, match="Sin IA"):
+        require_client()

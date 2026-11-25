@@ -6,7 +6,7 @@ Uso:
   python cli_bilateral.py izq.stl der.stl --peso 82 --reparto-izquierdo 45 -o salida/
   python cli_bilateral.py izq.stl der.stl --peso 70 --centro-masas 15 38 -o salida/
   python cli_bilateral.py izq.stl der.stl --peso 70 --estatura 165 --caida-navicular 7 -o salida/
-  python cli_bilateral.py izq.stl der.stl --peso 70 --ia-corte 2 --ia-presion 3 -o salida/   # revisión por IA
+  python cli_bilateral.py izq.stl der.stl --peso 70 --sin-ia -o salida/   # sin la revisión por IA (pruebas)
 
 Escribe en la carpeta de salida: los dos STL limpios (independientes, en el marco de su
 archivo), el mapa bilateral y los individuales en PNG, el CSV de presiones y el JSON de
@@ -42,8 +42,11 @@ def main(argv=None) -> int:
     ap.add_argument("--apertura", type=float, nargs=2, default=(7.0, 7.0), metavar=("IZQ", "DER"))
     ap.add_argument("--linea-carga", type=float, default=32.0, help="%% de la longitud desde el talón")
     ap.add_argument("--config", help="JSON con {'limpieza':{}, 'postura':{}, 'simulacion':{}}")
-    ap.add_argument("--ia-corte", type=int, default=0, metavar="RONDAS", help="revisar el corte de cada pie con Claude")
-    ap.add_argument("--ia-presion", type=int, default=0, metavar="RONDAS", help="revisar el mapa de presión con Claude")
+    ap.add_argument("--ia-corte", type=int, default=6, metavar="RONDAS",
+                    help="rondas máximas de revisión del corte de cada pie por Claude (por defecto 6)")
+    ap.add_argument("--ia-presion", type=int, default=6, metavar="RONDAS",
+                    help="rondas máximas de revisión del mapa de presión por Claude (por defecto 6)")
+    ap.add_argument("--sin-ia", action="store_true", help="procesar y simular sin la revisión por IA (pruebas)")
     ap.add_argument("--modelo", help="modelo de Claude (por defecto claude-sonnet-5-5)")
     a = ap.parse_args(argv)
     cfg = json.loads(Path(a.config).read_text()) if a.config else {}
@@ -53,19 +56,14 @@ def main(argv=None) -> int:
     try:
         for side, path in (("izquierdo", a.izquierdo), ("derecho", a.derecho)):
             s.load(side, Path(path).read_bytes(), Path(path).name)
-        proc = s.process(cfg.get("limpieza"))
         client = None
-        if a.ia_corte > 0 or a.ia_presion > 0:
-            from core.ai_client import ClaudeClient
-            client = ClaudeClient(model=a.modelo)
-        if a.ia_corte > 0:
-            from core.ai_tuner import tune_cut
-            for side in ("izquierdo", "derecho"):
-                r = tune_cut(s.pipes[side], client, rounds=a.ia_corte,
-                             log=lambda e, side=side: print(f"IA corte {side} ronda {e['round']}: {e['verdict']} — "
-                                                            f"{e['diagnosis']}"))
-                proc[side]["valid"] = bool(r["validacion"]["valid"])
-                s.process_reports[side]["valid"] = proc[side]["valid"]
+        if not a.sin_ia and (a.ia_corte > 0 or a.ia_presion > 0):
+            from core.ai_tuner import require_client
+            client = require_client(a.modelo)
+        proc = s.process(cfg.get("limpieza"), client if a.ia_corte > 0 else None, a.ia_corte)
+        for side, r in proc.items():
+            for e in (r.get("ia") or {}).get("history", []):
+                print(f"IA corte {side} ronda {e['round']}: {e['verdict']} — {e['diagnosis']}")
         for side, r in proc.items():
             print(f"Pie {side}: {'válido' if r['valid'] else 'NO VÁLIDO'} ({r['seconds']} s)")
         if not all(r["valid"] for r in proc.values()):
@@ -80,7 +78,7 @@ def main(argv=None) -> int:
         if a.centro_masas:
             sim.update(mode="centro_masas", com_x=a.centro_masas[0], com_y_frac=a.centro_masas[1] / 100.0)
         rep = s.simulate(sim, stance)
-        if a.ia_presion > 0:
+        if client is not None and a.ia_presion > 0:
             from core.ai_tuner import tune_pressure
             ia = tune_pressure(s, client, rounds=a.ia_presion, sim=sim,
                                log=lambda e: print(f"IA presión ronda {e['round']}: {e['verdict']} — {e['diagnosis']} "

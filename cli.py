@@ -5,8 +5,9 @@ Ejemplos:
     python cli.py escaneo.stl -o planta_solida.stl
     python cli.py escaneo.stl -o planta.obj --thickness 8 --mode offset --report informe.json
     python cli.py escaneo.stl -o suave.ply --stage suavizado --config parametros.json
-    python cli.py escaneo.stl -o plantilla.stl --ia 3 --vistas vistas.png   # revisión del corte por IA
-    python cli.py escaneo.stl -o planta.stl --corte planta                   # solo planta (sin paredes)
+    python cli.py escaneo.stl -o plantilla.stl --vistas vistas.png   # la IA revisa el corte (por defecto)
+    python cli.py escaneo.stl -o plantilla.stl --sin-ia             # sin IA (pruebas)
+    python cli.py escaneo.stl -o planta.stl --corte planta --sin-ia  # solo planta (sin paredes)
 
 Código de salida: 0 si el sólido supera la validación, 2 si no, 1 en caso de error.
 """
@@ -40,8 +41,9 @@ def main(argv=None) -> int:
     ap.add_argument("--corte", choices=("plantilla", "planta"),
                     help="plantilla (por defecto): planta + copa de talón + pestañas; planta: solo planta")
     ap.add_argument("--copa-talon", type=float, help="altura de la copa del talón sobre el suelo (mm)")
-    ap.add_argument("--ia", type=int, default=0, metavar="RONDAS",
-                    help="revisar el corte con Claude (necesita ANTHROPIC_API_KEY o .env); 0 = no")
+    ap.add_argument("--ia", type=int, default=6, metavar="RONDAS",
+                    help="rondas máximas de revisión del corte por Claude (por defecto 6; necesita ANTHROPIC_API_KEY o .env)")
+    ap.add_argument("--sin-ia", action="store_true", help="procesar sin la revisión por IA (pruebas)")
     ap.add_argument("--modelo", help="modelo de Claude para la revisión (por defecto claude-sonnet-5-5)")
     ap.add_argument("--vistas", help="guardar en PNG las vistas del corte (las que analiza la IA)")
     args = ap.parse_args(argv)
@@ -64,20 +66,21 @@ def main(argv=None) -> int:
         print(f"Cargado: {load['faces']} caras, {' x '.join(f'{d:.1f}' for d in load['dimensions_mm'])} mm")
         if args.flip:
             pipe.set_orientation(flip=True)
-        out = pipe.auto(params)
+        use_ai = not args.sin_ia and args.ia > 0 and params.get("segment", {}).get("mode", "plantilla") == "plantilla"
+        if use_ai:
+            from core.ai_tuner import auto_with_ai, require_client
+            out = auto_with_ai(pipe, require_client(args.modelo), params, rounds=args.ia,
+                               log=lambda e: print(f"IA ronda {e['round']}: {e['verdict']} — {e['diagnosis']} "
+                                                   f"{json.dumps(e['changes'], ensure_ascii=False)}"))
+            u = out["ia"]["usage"]
+            print(f"IA: {u['calls']} llamada(s), {u['input_tokens']} tokens de entrada, "
+                  f"{u['output_tokens']} de salida ({out['ia']['model']})")
+        else:
+            out = pipe.auto(params)
         cov = out["recortado"].get("cobertura") or {}
         if cov.get("zones"):
             print("Plantilla: cobertura " + ", ".join(f"{z['name']} {100 * z['coverage']:.0f}%" for z in cov["zones"].values())
                   + f" · {len(pipe.tuning)} intento(s) de corte")
-        if args.ia > 0:
-            from core.ai_client import ClaudeClient
-            from core.ai_tuner import tune_cut
-            res = tune_cut(pipe, ClaudeClient(model=args.modelo), rounds=args.ia, planes=params.get("planes"),
-                           log=lambda e: print(f"IA ronda {e['round']}: {e['verdict']} — {e['diagnosis']} "
-                                               f"{json.dumps(e['changes'], ensure_ascii=False)}"))
-            out["validacion"] = res["validacion"]
-            print(f"IA: {res['usage']['calls']} llamada(s), {res['usage']['input_tokens']} tokens de entrada, "
-                  f"{res['usage']['output_tokens']} de salida ({res['model']})")
         if args.vistas and (pipe.reports.get("segmentacion") or {}).get("insole"):
             from core.ai_tuner import cut_views_png
             Path(args.vistas).write_bytes(cut_views_png(pipe, title=Path(args.input).name))

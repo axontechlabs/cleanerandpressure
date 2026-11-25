@@ -136,17 +136,21 @@ indica y no lo presenta como válido. *Archivo original intacto* descarga la cop
   pestaña medial = altura del arco + 6 mm, pared lateral 10 mm, antepié 6 mm, dedos 4 mm.
 - El informe muestra la **cobertura** por zonas (talón, mediopié, antepié, dedos), la altura de
   pared alcanzada y los reajustes automáticos que se han hecho.
-- **🤖 Revisar y reajustar el corte con IA** (sección *Revisión por IA*): Claude mira el corte,
-  propone cambios de parámetros y se vuelve a cortar, hasta que lo da por bueno (3 rondas por
-  defecto). En el modo bilateral hay además **Revisar y reajustar el mapa de presión**.
+- **La IA forma parte del proceso.** *▶ Procesamiento automático completo* (un pie) y *Procesar ambos
+  escaneos* (bilateral) cortan, y Claude revisa el corte y reajusta los parámetros hasta darlo por
+  bueno (6 rondas como máximo) antes de suavizar y crear el sólido. *Simular* hace lo mismo con el
+  mapa de presión. Sin clave, el proceso se detiene y lo indica; la casilla *Sin IA (solo pruebas)*
+  permite procesar sin ella.
 - Necesita una clave de la API de Claude con créditos: se compran en la Claude Console
-  (`platform.claude.com` → *Settings → Billing → Buy credits*; la clave, en *API keys*). Detalles,
-  coste aproximado y cómo guardar la clave sin subirla a GitHub: [docs/IA.md](docs/IA.md).
+  (`platform.claude.com` → *Settings → Billing → Buy credits*; la clave, en *API keys*, ámbito
+  *Default workspace*). Detalles, coste aproximado y cómo guardar la clave sin subirla a GitHub:
+  [docs/IA.md](docs/IA.md).
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...      # o en el archivo .env (no se sube a GitHub)
-.venv/bin/python cli.py escaneo.stl -o plantilla.stl --ia 3 --vistas vistas.png
-.venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 --ia-corte 2 --ia-presion 3 -o salida/
+.venv/bin/python cli.py escaneo.stl -o plantilla.stl --vistas vistas.png      # con IA (por defecto)
+.venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 -o salida/          # con IA (por defecto)
+.venv/bin/python cli.py escaneo.stl -o plantilla.stl --sin-ia                  # sin IA (pruebas)
 ```
 
 ## Modo bilateral (dos pies)

@@ -403,7 +403,14 @@ def test_web_api_end_to_end():
         sc = S.make_scenario("fragmentos", ns=120, nt=60)
         res = json.loads(call("/api/upload?name=prueba.stl", stl_bytes(sc.mesh)))
         assert res["state"]["stages"] == ["original"]
-        res = json.loads(call("/api/auto", b"{}"))
+        # la IA forma parte del proceso: sin clave, el procesamiento automático se niega y lo explica
+        import urllib.error
+        from core import ai_client
+        if not ai_client.get_api_key():
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                call("/api/auto", b"{}")
+            assert exc.value.code == 400 and "clave" in json.loads(exc.value.read())["error"]
+        res = json.loads(call("/api/auto", b'{"sin_ia": true}'))
         assert res["report"]["validacion"]["valid"]
         assert res["state"]["stages"][-1] == "solido"
         head = np.frombuffer(call("/api/mesh/solido")[:8], dtype="<u4")

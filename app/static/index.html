@@ -50,10 +50,11 @@
     <label class="row">Modelo <input type="text" id="ai-model" placeholder="claude-sonnet-5-5"></label>
     <label class="row"><input type="checkbox" id="ai-persist"> Guardar en este ordenador (.env)</label>
     <div class="row"><button class="btn small" id="ai-save">Usar esta clave</button>
-      <label>Rondas <input type="number" id="ai-rounds" min="1" max="6" value="3" style="width:3.5em"></label></div>
-    <button class="btn wide accent" id="ai-cut" disabled>🤖 Revisar y reajustar el corte con IA</button>
+      <label>Rondas máx. <input type="number" id="ai-rounds" min="1" max="10" value="6" style="width:3.5em"></label></div>
+    <label class="row"><input type="checkbox" id="ai-off"> Sin IA (solo pruebas)</label>
+    <p class="hint">La IA forma parte del <b>procesamiento automático</b>: mira el corte (talón, arco, dedos, paredes), reajusta los parámetros y vuelve a cortar hasta darlo por bueno. Solo elige parámetros dentro de límites; la geometría la calcula siempre el programa.</p>
+    <button class="btn wide" id="ai-cut" disabled>🤖 Repetir la revisión del corte</button>
     <a id="ai-views" href="#" target="_blank" hidden>Ver las vistas que analiza la IA</a>
-    <p class="hint">La IA mira el corte (talón, arco, dedos, paredes), propone parámetros y se vuelve a cortar. Solo elige parámetros dentro de límites; la geometría la calcula siempre el programa.</p>
   </section>
 
   <section>

@@ -331,7 +331,7 @@ async function aiSaveKey() {
 }
 function aiCut() {
   run('La IA está revisando el corte (puede tardar 1–3 min)', async () => {
-    const r = await api('/api/ai/cut', { json: { rounds: Number($('#ai-rounds').value), model: $('#ai-model').value,
+    const r = await api('/api/ai/cut', { json: { rounds: Number($('#ai-rounds').value) || 6, model: $('#ai-model').value,
       segment: getParams('segment'), cut: getParams('cut'), planes: [...S.planes] } });
     if (r.report.final_params) { setParams('segment', r.report.final_params.segment); setParams('cut', r.report.final_params.cut); }
     await fetchLabels();
@@ -345,12 +345,16 @@ function aiCut() {
 }
 
 function autoAll() {
-  run('Procesamiento automático', async () => {
+  const noAi = $('#ai-off').checked;
+  run(noAi ? 'Procesamiento automático' : 'Procesamiento automático: la IA revisa y reajusta el corte (1–4 min)', async () => {
     const planes = [...S.planes];
     const r = await api('/api/auto', { json: { segment: getParams('segment'), cut: getParams('cut'), smooth: getParams('smooth'),
-      solid: getParams('solid'), planes, manual_b64: manualB64(), resegment: true } });
+      solid: getParams('solid'), planes, manual_b64: manualB64(), resegment: true,
+      sin_ia: noAi, rounds: Number($('#ai-rounds').value) || 6, model: $('#ai-model').value } });
+    if (r.report.ia && r.report.ia.final_params) { setParams('segment', r.report.ia.final_params.segment); setParams('cut', r.report.ia.final_params.cut); }
     await fetchLabels();
     await syncStages(r.state, 'segmentado'); paintLabels();
+    if (r.report.ia) { $('#ai-views').href = '/api/cut_views.png?t=' + Date.now(); $('#ai-views').hidden = false; }
     const v = r.report.validacion;
     if (!v.valid) return { text: 'Resultado NO válido: ' + v.errors[0], cls: 'err' };
     return v.warnings.length ? { text: 'Sólido válido, con avisos: ' + v.warnings[0], cls: 'warn' } : { text: 'Sólido válido y listo para exportar', cls: 'ok' };

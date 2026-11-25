@@ -63,16 +63,22 @@ ignoran). Si un cambio empeora claramente la cobertura medida, se deshace.
 
 ### Cómo se usa
 
-- **Interfaz de un pie**: sección *Revisión por IA* → pegue la clave → *Usar esta clave* (marque
-  *Guardar en este ordenador* si quiere que se recuerde) → *🤖 Revisar y reajustar el corte con IA*.
-- **Interfaz bilateral**: sección *5 · Revisión por IA* → *Revisar el corte de los dos pies* y
-  *Revisar y reajustar el mapa de presión*.
-- **Línea de comandos**:
+La revisión por IA **forma parte del proceso por defecto**: no hay que pulsar nada aparte.
+
+- **Interfaz de un pie**: configure la clave una vez (sección *Revisión por IA* → pegue la clave →
+  *Usar esta clave*; marque *Guardar en este ordenador* para que se recuerde) y pulse
+  *▶ Procesamiento automático completo*. El programa corta, la IA revisa y reajusta hasta darlo por
+  bueno (*Rondas máx.*, 6 por defecto) y después se suaviza, se crea el sólido y se valida.
+- **Interfaz bilateral**: *Procesar ambos escaneos* hace lo mismo con cada pie; *Simular* revisa y
+  reajusta además el mapa de presión. Los botones *Repetir la revisión…* vuelven a pasarla.
+- Sin clave, el proceso se detiene y lo indica. La casilla *Sin IA (solo pruebas)* procesa sin ella.
+- **Línea de comandos** (con IA por defecto; `--sin-ia` la desactiva, `--ia N`, `--ia-corte N` y
+  `--ia-presion N` fijan las rondas máximas):
 
   ```bash
   export ANTHROPIC_API_KEY=sk-ant-...            # o guárdela en el archivo .env (ver abajo)
-  .venv/bin/python cli.py escaneo.stl -o plantilla.stl --ia 3 --vistas vistas.png
-  .venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 --ia-corte 2 --ia-presion 3 -o salida/
+  .venv/bin/python cli.py escaneo.stl -o plantilla.stl --vistas vistas.png
+  .venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 -o salida/
   ```
 
 ### La clave
@@ -90,12 +96,14 @@ El modelo por defecto es `claude-sonnet-5-5`; se cambia en la interfaz, con `--m
 
 La API se paga aparte de la suscripción de claude.ai, con **créditos de prepago** en la
 **Claude Console**: cree una cuenta en `platform.claude.com`, vaya a *Settings → Billing*, pulse
-*Buy credits* y, en *API keys*, cree la clave. Con un plan Max, Ultra o Team se pueden reclamar
+*Buy credits* y, en *API keys*, cree la clave (si pregunta dónde se ejecuta el código, elija
+«en otro sitio» / *Somewhere else*; ámbito *Default workspace*). Con un plan Max, Ultra o Team se pueden reclamar
 además los créditos mensuales de API incluidos vinculando una organización de la Console.
 
 Cada ronda envía una imagen y unas cifras (del orden de 3 000–5 000 tokens de entrada y unos
-cientos de salida). Con Claude Sonnet 5.5 (2 $ por millón de tokens de entrada, 10 $ por millón de
-salida) una revisión de 3 rondas cuesta del orden de unos céntimos de dólar. La interfaz y la CLI
+cientos a pocos miles de salida). Con Claude Sonnet 5.5 (2 $ por millón de tokens de entrada, 10 $
+por millón de salida) procesar un par de pies con su simulación (hasta 6 rondas en cada paso) cuesta
+del orden de céntimos a pocas décimas de dólar. La interfaz y la CLI
 muestran las llamadas y los tokens usados.
 
 ### Privacidad

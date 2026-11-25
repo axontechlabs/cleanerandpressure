@@ -72,8 +72,10 @@ las líneas discontinuas son la línea de recorte objetivo;
 También recibes la cobertura medida por el programa (fracción de lo que el escaneo permite conservar en cada zona, \
 milímetros que faltan por la punta o el talón, altura de pared alcanzada) y los parámetros actuales con sus límites.
 
-Decide si el corte es correcto. Si no lo es, propone cambios CONCRETOS de parámetros (solo los de la lista, dentro \
-de sus límites, pocos cada vez y razonados por lo que ves). No cambies lo que ya está bien.
+Sé exigente: este corte se usa directamente para fabricar la plantilla, sin revisión humana. Responde "correcto" \
+solo si no queda nada que mejorar (talón entero, arco, los cinco dedos, paredes a la altura objetivo, contorno \
+limpio, nada ajeno). Si no, propone cambios CONCRETOS de parámetros (solo los de la lista, dentro de sus límites, \
+pocos cada vez y razonados por lo que ves). No cambies lo que ya está bien.
 
 Responde SOLO con un objeto JSON, sin texto adicional:
 {"veredicto": "correcto" | "ajustar",
@@ -98,7 +100,8 @@ Los valores exactos dependen del sensor y de la persona: busca un mapa plausible
 
 Recibes la imagen del mapa bilateral (escala común en kPa), las cifras por región y por dedo, los avisos del \
 modelo y los parámetros ajustables con sus límites. Decide si el mapa es realista; si no, propone cambios \
-CONCRETOS (solo parámetros de la lista, dentro de sus límites, pocos cada vez, explicando la razón física).
+CONCRETOS (solo parámetros de la lista, dentro de sus límites, pocos cada vez, explicando la razón física). \
+Responde "correcto" solo si el mapa es plausible en todo (reparto, dedos, banda lateral, picos).
 
 Responde SOLO con un objeto JSON, sin texto adicional:
 {"veredicto": "correcto" | "ajustar",
@@ -243,6 +246,43 @@ def tune_cut(pipe: Pipeline, client: ClaudeClient, rounds: int = 3, planes=None,
         pipe.smooth()
         pipe.solid()
         out["validacion"] = pipe.validate()
+    return out
+
+
+DEFAULT_ROUNDS = 6
+
+
+def require_client(model: str | None = None) -> ClaudeClient:
+    """Cliente para el proceso por defecto: sin clave no se procesa (la IA forma parte del proceso)."""
+    from .ai_client import get_api_key
+    if not get_api_key():
+        raise AIError("La revisión por IA forma parte del proceso y no hay clave de la API de Claude. "
+                      "Introdúzcala en «Revisión por IA» (o defina ANTHROPIC_API_KEY). Para probar sin IA, "
+                      "marque «Sin IA».")
+    return ClaudeClient(model=model)
+
+
+def auto_with_ai(pipe: Pipeline, client: ClaudeClient, params: dict | None = None,
+                 rounds: int = DEFAULT_ROUNDS, log=None) -> dict:
+    """Proceso completo de un pie con la IA dentro: corte por reglas → revisión por IA hasta que lo
+    da por bueno (o se agotan las rondas) → suavizado → sólido → validación."""
+    params = params or {}
+    out = {}
+    if "analisis" not in pipe.reports:
+        out["analisis"] = pipe.analyze()
+    seg = dict(params.get("segment") or {})
+    seg.setdefault("mode", "plantilla")
+    if seg["mode"] != "plantilla":
+        raise AIError("La revisión por IA del corte necesita el tipo de corte «plantilla».")
+    pipe.autotune_cut(seg, params.get("cut"), params.get("planes"))
+    ia = tune_cut(pipe, client, rounds=rounds, planes=params.get("planes"), log=log, finish=False)
+    out["segmentacion"] = pipe.reports["segmentacion"]
+    out["segmentado"] = pipe.reports["segmentado"]
+    out["recortado"] = pipe.reports["recortado"]
+    out["suavizado"] = pipe.smooth(params.get("smooth"))
+    out["solido"] = pipe.solid(params.get("solid"))
+    out["validacion"] = pipe.validate()
+    out["ia"] = ia
     return out
 
 

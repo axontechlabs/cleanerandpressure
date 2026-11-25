@@ -51,15 +51,22 @@ class BilateralSession:
         self.reset_results()
         return self.state()
 
-    def process(self, params: dict | None = None) -> dict:
-        """Limpia ambos escaneos por separado con el pipeline existente y valida los sólidos."""
+    def process(self, params: dict | None = None, ai_client=None, ai_rounds: int = 6) -> dict:
+        """Limpia ambos escaneos por separado con el pipeline existente y valida los sólidos.
+
+        Con ``ai_client``, el corte de cada pie lo revisa y reajusta la IA dentro del proceso.
+        """
         for s in SIDES:
             if self.pipes[s].work is None:
                 raise BilateralError(f"Falta el escaneo del pie {s}.")
         out = {}
         for s in SIDES:
             t0 = time.time()
-            r = self.pipes[s].auto(params)
+            if ai_client is not None:
+                from .ai_tuner import auto_with_ai
+                r = auto_with_ai(self.pipes[s], ai_client, params, rounds=ai_rounds)
+            else:
+                r = self.pipes[s].auto(params)
             v = r["validacion"]
             out[s] = {
                 "file": self.pipes[s].name, "valid": bool(v["valid"]), "seconds": round(time.time() - t0, 1),
@@ -67,6 +74,9 @@ class BilateralSession:
                 "failed_checks": [c["name"] for c in v["checks"] if not c["ok"]],
                 "warnings": sum((r.get(k, {}).get("warnings", []) for k in ("segmentacion", "recortado", "suavizado")), []),
                 "deviation_mean_mm": v.get("quality", {}).get("deviation", {}).get("mean"),
+                "cobertura": (r.get("recortado") or {}).get("cobertura"),
+                "ia": ({"history": r["ia"]["history"], "model": r["ia"]["model"], "usage": r["ia"]["usage"]}
+                       if r.get("ia") else None),
             }
         self.process_reports = out
         self.reset_results()

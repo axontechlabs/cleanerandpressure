@@ -103,11 +103,12 @@
     <div class="hint" id="ai-state">…</div>
     <div class="param"><span>Clave API</span><input type="password" id="ai-key" placeholder="sk-ant-…" autocomplete="off"></div>
     <div class="param"><span>Guardar en este ordenador</span><input type="checkbox" id="ai-persist"></div>
-    <div class="param"><span>Rondas</span><input type="number" id="ai-rounds" value="3" min="1" max="6" step="1"></div>
+    <div class="param"><span>Rondas máximas</span><input type="number" id="ai-rounds" value="6" min="1" max="10" step="1"></div>
+    <div class="param"><span>Sin IA (solo pruebas)</span><input type="checkbox" id="ai-off"></div>
     <button class="btn small" id="ai-save">Usar esta clave</button>
-    <button class="btn wide" id="ai-cut" disabled>🤖 Revisar el corte de los dos pies</button>
-    <button class="btn wide" id="ai-pressure" disabled>🤖 Revisar y reajustar el mapa de presión</button>
-    <div class="hint">La IA mira las imágenes y las cifras, propone parámetros dentro de límites y se repite el cálculo. La geometría y la física las calcula siempre el programa.</div>
+    <div class="hint">La IA forma parte del proceso: al <b>procesar</b>, revisa el corte de cada pie y reajusta los parámetros hasta darlo por bueno; al <b>simular</b>, revisa el mapa de presión y reajusta el modelo. La geometría y la física las calcula siempre el programa.</div>
+    <button class="btn wide" id="ai-cut" disabled>🤖 Repetir la revisión del corte</button>
+    <button class="btn wide" id="ai-pressure" disabled>🤖 Repetir la revisión de la presión</button>
     <div id="ai-log"></div>
   </section>
 </aside>
