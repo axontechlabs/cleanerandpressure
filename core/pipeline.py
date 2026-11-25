@@ -27,7 +27,7 @@ from .orientation import Frame, estimate_frame
 from .segmentation import SegmentationParams, extract, segment_plantar
 from .smoothing import SmoothParams, smooth_surface
 from .surface_remesh import ContourParams, remesh_heightfield
-from .insole import coverage_report
+from .insole import build_walls, coverage_report
 
 # Reajuste automático del corte de plantilla: límites de cada parámetro.
 TUNE_LIMITS = {
@@ -97,6 +97,9 @@ class Pipeline:
         self.labels: np.ndarray | None = None
         self.reason: np.ndarray | None = None
         self.tuning: list[dict] = []
+        self._plantar = None            # planta remallada sin paredes (modo plantilla)
+        self._cut_planes = []
+        self._wall_scan = None          # caras del escaneo de las que se toma la pared
         self.manual: np.ndarray | None = None
         self.stages: dict[str, Mesh] = {}        # mallas en el marco canónico
         self.reports: dict[str, dict] = {}
@@ -270,12 +273,46 @@ class Pipeline:
             m = plane_clip(m, pt, nr)
             self._need(m.n_faces > 0, "El plano de corte elimina toda la superficie.")
         context = [self.stages["segmentado"]] + ([self._rim] if self._rim is not None else [])
+        ins = (self.reports.get("segmentacion") or {}).get("insole")
+        self._plantar = None
+        self._wall_scan = None
+        self._cut_planes = []
+        for pl in planes or []:
+            pt = self.frame.to_canonical(np.asarray(pl["point"], float)[None])[0]
+            nr = np.asarray(pl["normal"], float) @ self.frame.rotation.T
+            self._cut_planes.append((pt, nr / max(np.linalg.norm(nr), 1e-12)))
+        if ins and self.labels is not None and self.reason is not None:
+            # Modo plantilla: la planta se remalla como campo de alturas (lo que representa bien) y la
+            # pared se construye aparte, en columnas a lo largo del borde (build_walls).
+            core = (self.labels > 0) & (self.reason != 3)
+            mc = self.work_c.submesh(core)
+            n_c, a_c = mc.face_normals()
+            if (a_c * n_c[:, 2]).sum() < 0:
+                mc = mc.flipped()
+            for pl in planes or []:
+                pt = self.frame.to_canonical(np.asarray(pl["point"], float)[None])[0]
+                nr = np.asarray(pl["normal"], float) @ self.frame.rotation.T
+                mc = plane_clip(mc, pt, nr)
+            if mc.n_faces > 0:
+                m = mc
         try:
             res = remesh_heightfield(m, ContourParams.from_dict(params), merge_meshes(context))
         except ValueError as e:
             raise PipelineError(str(e)) from e
         info = res["info"]
-        ins = (self.reports.get("segmentacion") or {}).get("insole")
+        if ins and self.labels is not None and self.reason is not None:
+            try:
+                sp = getattr(self, "_seg_params", None)
+                scan = self.work_c.submesh(self.labels > 0)
+                w = self._walls(res["mesh"], scan, ins)
+                self._plantar = (res["mesh"], res["support"])
+                self._wall_scan = scan
+                res["support"] = np.concatenate([res["support"], np.zeros(w["n_wall_vertices"], bool)])
+                res["mesh"] = w["mesh"]
+                info["paredes"] = w["info"]
+                info["faces"] = w["mesh"].n_faces
+            except Exception as e:  # noqa: BLE001 - sin pared se sigue con la planta
+                info.setdefault("warnings", []).append(f"No se ha podido construir la pared de la plantilla: {e}")
         if ins:
             try:
                 info["cobertura"] = coverage_report(self.work_c, res["mesh"], ins["frame"], ins["targets"],
@@ -294,11 +331,37 @@ class Pipeline:
         self.reports["recortado"] = info
         return info
 
+    def _walls(self, plantar, scan, ins) -> dict:
+        """Pared de la plantilla sobre el borde de la planta, respetando los planos de corte."""
+        sp = getattr(self, "_seg_params", None)
+        w = build_walls(plantar, scan, ins["frame"], ins["targets"], getattr(sp, "wall_min", 2.0),
+                        planes=self._cut_planes)
+        if self._cut_planes:
+            m = w["mesh"]
+            v = m.vertices.copy()
+            n0 = plantar.n_vertices
+            for pt, nr in self._cut_planes:
+                d = (v[n0:] - pt) @ nr
+                v[n0:] -= np.minimum(d, 0.0)[:, None] * nr[None, :]
+            w["mesh"] = Mesh(v, m.faces)
+        return w
+
     # ------------------------------------------------------------------ etapa 4
     def smooth(self, params: dict | None = None) -> dict:
         self._need("recortado" in self.stages, "Ejecute primero el recorte.")
         t0 = time.time()
-        res = smooth_surface(self.stages["recortado"], SmoothParams.from_dict(params))
+        ins = (self.reports.get("segmentacion") or {}).get("insole")
+        if self._plantar is not None and ins:
+            # se suaviza la planta (campo de alturas) y se vuelve a levantar la pared sobre su borde
+            res = smooth_surface(self._plantar[0], SmoothParams.from_dict(params))
+            w = self._walls(res["mesh"], self._wall_scan, ins)
+            nw = w["n_wall_vertices"]
+            res["mesh"] = w["mesh"]
+            res["fields"] = {k: np.concatenate([np.asarray(f), np.zeros(nw, np.asarray(f).dtype)])
+                             for k, f in res["fields"].items()}
+            res["info"]["paredes"] = w["info"]
+        else:
+            res = smooth_surface(self.stages["recortado"], SmoothParams.from_dict(params))
         info = res["info"]
         info["seconds"] = round(time.time() - t0, 3)
         self._invalidate_after("recortado")

@@ -80,6 +80,14 @@ def render_cut_views(full: Mesh, labels: np.ndarray | None, surface: Mesh | None
         im = ax.imshow(hm2.T, origin="lower", extent=ext, cmap="turbo", vmin=0,
                        vmax=max(25.0, float(np.nanpercentile(-r2["zmax"], 99)) if np.isfinite(r2["zmax"]).any() else 25))
         fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02).set_label("altura sobre el suelo (mm)", fontsize=8)
+        # relieve sombreado encima: deja ver escalones, ondas o dientes en la superficie y en el borde
+        hz = np.where(np.isfinite(r2["zmax"]), -r2["zmax"], np.nan)
+        gy, gx = np.gradient(np.nan_to_num(hz, nan=np.nanmin(hz) if np.isfinite(hz).any() else 0.0), g.res)
+        shade = np.clip((-gx * 0.6 - gy * 0.6 + 1.0) / np.sqrt(1 + gx ** 2 + gy ** 2), 0, 1)
+        shade_img = np.zeros(shade.shape + (4,))
+        shade_img[..., :3] = shade[..., None]
+        shade_img[..., 3] = np.where(np.isfinite(hz), 0.45, 0.0)
+        ax.imshow(np.transpose(shade_img, (1, 0, 2)), origin="lower", extent=ext)
         for loop in boundary_loops(surface):
             pb = surface.vertices[loop]
             sb, qb, _ = _anat(frame, pb)
@@ -91,7 +99,7 @@ def render_cut_views(full: Mesh, labels: np.ndarray | None, surface: Mesh | None
     ax.set_xlim(ext[0], ext[1])
     ax.set_ylim(ext[2], ext[3])
     ax.set_facecolor("#202020")
-    ax.set_title("Superficie de plantilla resultante\n(color = altura sobre el suelo)", fontsize=9)
+    ax.set_title("Superficie de plantilla resultante\n(color = altura sobre el suelo, con relieve sombreado)", fontsize=9)
     ax.set_aspect("equal")
     # ---------------- 3. perfiles medial y lateral
     ax = axs[2]

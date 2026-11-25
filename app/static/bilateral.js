@@ -16,6 +16,14 @@ const S = { state: null, report: null, placement: null, mapView: 'bilateral', ta
 // ------------------------------------------------------------------ utilidades
 const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(v)) ? '—'
   : Number(v).toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
+// Dónde ha fallado (archivo:línea), para poder diagnosticar cualquier error que llegue al usuario.
+function errWhere(e) {
+  const m = String((e && e.stack) || '').match(/\/static\/([\w.-]+\.js)(?:\?[^:]*)?:(\d+)/);
+  return m ? ` [${m[1]}:${m[2]}]` : '';
+}
+window.addEventListener('error', (ev) => { const s = document.getElementById('status'); if (s) { s.textContent = `Error: ${ev.message}${errWhere(ev.error)}`; s.className = 'err'; } });
+window.addEventListener('unhandledrejection', (ev) => { const s = document.getElementById('status'); if (s) { s.textContent = `Error: ${(ev.reason && ev.reason.message) || ev.reason}${errWhere(ev.reason)}`; s.className = 'err'; } });
+
 function status(text, cls = 'idle') { const s = $('#status'); s.textContent = text; s.className = cls; s.title = text; }
 
 async function api(path, body, raw = false) {
@@ -32,7 +40,7 @@ async function busy(label, fn) {
   status(label + '…', 'busy');
   $$('button').forEach((b) => { b.dataset.wasDisabled = b.disabled; b.disabled = true; });
   try { return await fn(); }
-  catch (e) { status(e.message, 'err'); return null; }
+  catch (e) { status(e.message + errWhere(e), 'err'); console.error(e); return null; }
   finally { $$('button').forEach((b) => { b.disabled = b.dataset.wasDisabled === 'true'; }); refreshButtons(); }
 }
 
@@ -106,7 +114,7 @@ function applySim(p) {
   for (const k of ['toe_flexor', 'toe_definition', 'toe_pulp_lift', 'toe_spread', 'spread', 'nonlinearity_scale', 'toe_max_flexion', 'arch_drop']) {
     if (p && p[k] !== undefined && p[k] !== null && $('#' + k)) $('#' + k).value = p[k];
   }
-  if (p && p.load_point) $('#load_point').value = Math.round(p.load_point * 100);
+  if (p && p.load_point && $('#load_point')) $('#load_point').value = Math.round(p.load_point * 100);
   for (const s of SIDES) for (const [reg, vals] of Object.entries(((p || {}).tissue || {})[s] || {}))
     for (const [q, v] of Object.entries(vals)) { const el = $(`#tissue input[data-side="${s}"][data-reg="${reg}"][data-q="${q}"]`); if (el) el.value = v; }
 }
@@ -407,7 +415,7 @@ function wire() {
   // la conexión con la IA la gestiona /static/ai_gate.js (independiente de este archivo)
   $('#split').addEventListener('input', updateSplit);
   $('#mode').addEventListener('change', () => {
-    const com = $('#mode').value === 'centro_masas';
+    const com = val('#mode', '') === 'centro_masas';
     $('#com-box').hidden = !com; $('#split-box').hidden = com;
   });
   $$('[data-tab]').forEach((b) => { b.onclick = () => setTab(b.dataset.tab); });

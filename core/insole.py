@@ -39,6 +39,7 @@ ZONES = (("talon", "Talón", 0.0, 0.25), ("mediopie", "Mediopié / arco", 0.25, 
          ("antepie", "Antepié", 0.60, 0.80), ("dedos", "Dedos", 0.80, 1.01))
 ZONE_WEIGHTS = {"talon": 0.25, "mediopie": 0.20, "antepie": 0.25, "dedos": 0.30}
 LOAD_POINT = 0.32
+CLIP_MARGIN = 4.0      # mm: la pared se selecciona algo por encima de la línea y se recorta exacta
 
 
 def _smoothstep(x):
@@ -193,7 +194,7 @@ def grow_walls(mesh: Mesh, keep: np.ndarray, forced_remove: np.ndarray, p, grid_
     s0 = np.sign((area[keep] * n[keep, 2]).sum()) or 1.0
     nz = s0 * n[:, 2]
     hv = frame.height(v)
-    h_face = hv[f].max(axis=1)
+    h_face = hv[f].min(axis=1)              # la cara empieza por debajo de la línea (se recorta exacta después)
     h_cen = frame.height(cen)
     # altura local de la planta: la del vértice de la planta más cercano en planta (los dedos
     # levantados de un escaneo sin carga tienen su propia base, no la del suelo)
@@ -211,7 +212,8 @@ def grow_walls(mesh: Mesh, keep: np.ndarray, forced_remove: np.ndarray, p, grid_
     depth = ztop[gi, gj] - cen[:, 2]
     visible = np.isfinite(depth) & (depth <= p.layer_tol + grid.res * tan_f + 0.5)
     cand = (~keep & ~forced_remove & (nz >= np.cos(np.radians(p.wall_max_angle))) & visible
-            & (h_face <= allowed + 0.5) & (h_cen >= -2.0) & (d_sole <= p.wall_max_reach))
+            & (h_face <= allowed + 0.5) & (hv[f].max(axis=1) <= allowed + CLIP_MARGIN)
+            & (h_cen >= -2.0) & (d_sole <= p.wall_max_reach))
     # crecimiento por adyacencia desde la planta (solo aristas variedad, sin pliegues bruscos)
     adj = topo.adj
     man = adj >= 0
@@ -389,3 +391,167 @@ def frame_dict(frame: AnatomyFrame) -> dict:
 
 def frame_view(d: dict) -> AnatomyFrame:
     return _FrameView(d)
+
+
+# ============================================================================ paredes
+def _slice_points(mesh: Mesh, hv: np.ndarray, level: float) -> np.ndarray:
+    """Puntos (xy) de la intersección de la malla con la superficie «altura sobre el suelo = level»."""
+    F = mesh.faces
+    fv = hv[F] - level
+    s = np.sign(fv)
+    s[s == 0] = 1
+    cross = ~((s[:, 0] == s[:, 1]) & (s[:, 1] == s[:, 2]))
+    if not cross.any():
+        return np.zeros((0, 2))
+    Fc, fc = F[cross], fv[cross]
+    v = mesh.vertices
+    pts = []
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        m = np.sign(fc[:, a]) != np.sign(fc[:, b])
+        m &= (fc[:, a] != fc[:, b])
+        t = fc[m, a] / (fc[m, a] - fc[m, b])
+        pa, pb = v[Fc[m, a], :2], v[Fc[m, b], :2]
+        pts.append(pa + t[:, None] * (pb - pa))
+    return np.concatenate(pts) if pts else np.zeros((0, 2))
+
+
+def build_walls(plantar: Mesh, scan: Mesh, frame_d: dict, targets: dict, wall_min: float = 2.0,
+                n_rows: int = 10, reach: float = 25.0, level_step: float = 0.5, planes=None) -> dict:
+    """Pared de la plantilla como una franja de columnas a lo largo del borde de la planta.
+
+    Un campo de alturas en rejilla XY no puede representar paredes casi verticales (salen escalones y
+    el borde en dientes de sierra). La pared se construye aparte:
+
+    * Base = borde exterior de la planta remallada (los mismos vértices: la unión es exacta).
+    * Arriba = la línea de recorte: ``max(altura objetivo de la zona, borde de la planta + wall_min)``,
+      suavizada a lo largo del borde.
+    * En cada columna (perpendicular al borde, hacia fuera) se sigue la pared del escaneo subiendo por
+      cortes horizontales cada ``level_step`` mm; donde el escaneo no tiene pared se prolonga la última
+      inclinación. Los desplazamientos se suavizan a lo largo del borde y en altura.
+
+    En los tramos del borde que vienen de un plano de corte (``planes``: lista de ``(punto, normal)``)
+    la pared sube recta, sin salirse del plano.
+
+    Devuelve la malla de la pared (con los vértices de la base en el mismo orden que el borde) y la
+    unión planta + pared.
+    """
+    from scipy.spatial import cKDTree
+    from .mesh import boundary_loops
+    frame = frame_view(frame_d)
+    loops = boundary_loops(plantar)
+    if not loops:
+        raise ValueError("La planta no tiene borde.")
+    lp = np.asarray(max(loops, key=len))
+    F = plantar.faces
+    # orientación del borde según el sentido de las caras (para coser la pared con el mismo sentido)
+    a0, b0 = lp[0], lp[1]
+    has_ab = ((F[:, 0] == a0) & (F[:, 1] == b0)) | ((F[:, 1] == a0) & (F[:, 2] == b0)) | ((F[:, 2] == a0) & (F[:, 0] == b0))
+    if not has_ab.any():
+        lp = lp[::-1]
+    P = plantar.vertices[lp]
+    n = len(lp)
+    xy = P[:, :2]
+    h0 = frame.height(P)
+    # dirección hacia fuera en planta (perpendicular a la tangente suavizada)
+    tang = np.roll(xy, -3, axis=0) - np.roll(xy, 3, axis=0)
+    tang /= np.maximum(np.linalg.norm(tang, axis=1, keepdims=True), 1e-9)
+    area2 = np.sum(xy[:, 0] * np.roll(xy[:, 1], -1) - np.roll(xy[:, 0], -1) * xy[:, 1])
+    out = np.stack([tang[:, 1], -tang[:, 0]], axis=1) * (1.0 if area2 > 0 else -1.0)
+    out = ndimage.gaussian_filter1d(out, 3.0, axis=0, mode="wrap")
+    out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+    # altura de la línea de recorte en cada columna
+    H = np.maximum(trim_height(xy, frame, targets), h0 + wall_min)
+    H = ndimage.gaussian_filter1d(H, 6.0, mode="wrap")
+    H = np.maximum(H, h0 + max(wall_min, 0.8))
+    # cortes horizontales del escaneo (solo lo cercano al borde)
+    hv_scan = frame.height(scan.vertices)
+    lo, hi = float(max(h0.min() - 1, -2)), float(H.max() + 1)
+    levels = np.arange(lo, hi + level_step, level_step)
+    trees = {}
+    tree_all = cKDTree(xy)
+    for j, L in enumerate(levels):
+        pts = _slice_points(scan, hv_scan, L)
+        if len(pts):
+            d, _ = tree_all.query(pts, distance_upper_bound=reach + 2)
+            pts = pts[np.isfinite(d)]
+        trees[j] = cKDTree(pts) if len(pts) else None
+    # seguir la pared columna a columna
+    K = n_rows
+    D = np.zeros((n, K + 1))
+    Hk = h0[:, None] + (H - h0)[:, None] * (np.arange(K + 1) / K)[None, :]
+    found = np.zeros((n, K + 1), bool)
+    found[:, 0] = True
+    for k in range(1, K + 1):
+        dprev = D[:, k - 1]
+        slope = D[:, k - 1] - D[:, k - 2] if k >= 2 else np.zeros(n)
+        pred = xy + out * (dprev + slope)[:, None]
+        jl = np.clip(np.rint((Hk[:, k] - lo) / level_step).astype(int), 0, len(levels) - 1)
+        dk = dprev + slope                         # por defecto, se prolonga la inclinación
+        for j in np.unique(jl):
+            t = trees.get(int(j))
+            if t is None:
+                continue
+            idx = np.flatnonzero(jl == j)
+            dist, nn = t.query(pred[idx], distance_upper_bound=3.0)
+            ok = np.isfinite(dist)
+            if ok.any():
+                q = t.data[nn[ok]]
+                dk[idx[ok]] = np.einsum("ij,ij->i", q - xy[idx[ok]], out[idx[ok]])
+                found[idx[ok], k] = True
+        # la pared no se mete bajo la planta ni se aleja más de lo razonable
+        D[:, k] = np.clip(dk, dprev - 1.0, np.minimum(dprev + 6.0, reach))
+    # suavizado a lo largo del borde y en altura
+    D[:, 1:] = ndimage.gaussian_filter1d(D[:, 1:], 6.0, axis=0, mode="wrap")
+    D[:, 1:] = ndimage.gaussian_filter1d(D[:, 1:], 0.8, axis=1, mode="nearest")
+    # sin voladizos: vista desde el suelo, la pared solo puede ir hacia fuera al subir (si no, la
+    # superficie dejaría de ser un campo de alturas y el sólido se autointersecaría)
+    D[:, 0] = 0.0
+    for k in range(1, K + 1):
+        D[:, k] = np.maximum(D[:, k], D[:, k - 1] + 0.02)
+    # tramos del borde que vienen de un plano de corte: sin pared (se desvanece suavemente a los lados)
+    wgt = np.ones(n)
+    if planes:
+        on_plane = np.zeros(n, bool)
+        for pt, nr in planes:
+            on_plane |= np.abs((P - pt) @ nr) < 1.5
+        if on_plane.any():
+            wgt = 1.0 - np.clip(ndimage.gaussian_filter1d(on_plane.astype(float), 3.0, mode="wrap") * 2.0, 0, 1)
+            wgt[on_plane] = 0.0
+            wgt[wgt < 0.02] = 0.0
+            D *= wgt[:, None]
+            Hk = h0[:, None] + (Hk - h0[:, None]) * wgt[:, None]
+    # vértices de la pared
+    a_, b_, c_ = frame.plane
+    Wxy = xy[:, None, :] + out[:, None, :] * D[:, :, None]
+    Wz = a_ * Wxy[..., 0] + b_ * Wxy[..., 1] + c_ - Hk
+    W = np.concatenate([Wxy, Wz[..., None]], axis=2)            # (n, K+1, 3)
+    nv0 = plantar.n_vertices
+    vid = np.empty((n, K + 1), np.int64)
+    vid[:, 0] = lp
+    vid[:, 1:] = nv0 + np.arange(n * K).reshape(n, K)
+    flat = wgt <= 0
+    vid[flat, 1:] = lp[flat, None]                    # columna sin pared: todo en el vértice de la base
+    new_v = W[:, 1:, :].reshape(-1, 3)
+    i0 = np.arange(n)
+    i1 = np.roll(i0, -1)
+    faces = []
+    for k in range(K):
+        A, B = vid[i0, k], vid[i1, k]
+        C, Dd = vid[i1, k + 1], vid[i0, k + 1]
+        faces.append(np.stack([B, A, Dd], axis=1))
+        faces.append(np.stack([B, Dd, C], axis=1))
+    wf = np.concatenate(faces)
+    wf = wf[(wf[:, 0] != wf[:, 1]) & (wf[:, 1] != wf[:, 2]) & (wf[:, 2] != wf[:, 0])]
+    allv = np.concatenate([plantar.vertices, new_v])
+    allf = np.concatenate([plantar.faces, wf])
+    used = np.zeros(len(allv), bool)
+    used[allf.ravel()] = True
+    used[:nv0] = True                                  # la planta conserva su numeración
+    remap = np.cumsum(used) - 1
+    merged = Mesh(allv[used], remap[allf])
+    new_v = allv[nv0:][used[nv0:]]
+    cover = float(found[:, 1:].mean())
+    info = {"columns": int(n), "rows": int(K), "scan_coverage": round(cover, 3),
+            "height_mm": {"min": float((H - h0).min()), "max": float((H - h0).max())},
+            "offset_mm_max": float(D.max())}
+    return {"mesh": merged, "n_wall_vertices": int(len(new_v)), "info": info}
