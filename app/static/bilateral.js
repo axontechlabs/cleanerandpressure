@@ -1,3 +1,4 @@
+import * as aiGate from './ai_gate.js';
 // Modo bilateral: dos escaneos, dos limpiezas independientes y una simulación conjunta.
 import { Viewer } from './viewer.js';
 
@@ -94,12 +95,6 @@ function simParams() {
   };
 }
 
-async function aiRefresh() {
-  try {
-    const st = await api('/api/ai/status');
-    $('#ai-state').textContent = st.configured ? `Clave configurada (${st.source}: ${st.key_hint}) · modelo ${st.model}` : 'Sin clave: introdúzcala para usar la IA';
-  } catch (e) { /* sin servidor */ }
-}
 function aiLog(groups) {
   let h = '';
   for (const [title, hist] of groups) {
@@ -393,10 +388,7 @@ function wire() {
     status(`Equilibrio: ${fmt(g.feet_force_N, 1)} N = m·g · reparto ${fmt(g.split_left_pct)} / ${fmt(g.split_right_pct)} % · máx. ${fmt(g.peak_kPa, 0)} kPa`,
       (d.report.warnings || []).length ? 'warn' : 'ok');
   });
-  $('#ai-save').onclick = () => busy('Guardando la clave', async () => {
-    await api('/api/ai/key', { key: $('#ai-key').value, persist: $('#ai-persist').checked });
-    $('#ai-key').value = ''; await aiRefresh(); status('Clave configurada', 'ok');
-  });
+  $('#ai-config').onclick = () => aiGate.open();
   $('#ai-cut').onclick = () => busy('La IA está revisando el corte de los dos pies (unos minutos)', async () => {
     const d = await api('/api/bi/ai/cut', { rounds: num('#ai-rounds') || 6 }); S.state = d.state; S.report = null; S.placement = null;
     renderProcessing(); renderReport(); showMap();
@@ -414,7 +406,8 @@ function wire() {
     const h = d.report.ia.history, last = h[h.length - 1] || {};
     status(`IA (${h.length} ronda/s): ${last.diagnosis || ''}`, last.verdict === 'correcto' ? 'ok' : 'warn');
   });
-  aiRefresh();
+  $('#ai-off').addEventListener('change', () => aiGate.refresh());
+  aiGate.initAiGate();
   $('#split').addEventListener('input', updateSplit);
   $('#mode').addEventListener('change', () => {
     const com = $('#mode').value === 'centro_masas';

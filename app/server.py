@@ -1,6 +1,7 @@
 """Servidor web local (Starlette + Uvicorn): API de procesamiento y archivos estáticos del visor."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import math
@@ -278,11 +279,21 @@ async def ai_status(request: Request):
 
 
 async def ai_key(request: Request):
+    """Fija la clave/modelo (por defecto se guarda en .env) y comprueba la conexión con una llamada mínima."""
     try:
         body = await _body_json(request)
-        return _json(ai_client.set_api_key(body.get("key"), body.get("model"), bool(body.get("persist"))))
+        ai_client.set_api_key(body.get("key"), body.get("model"), bool(body.get("persist", True)))
     except (PipelineError, AIError) as e:
         return _json({"error": str(e)}, 400)
+    st = await asyncio.to_thread(ai_client.test_connection)
+    if st["connected"]:
+        return _json(st)
+    return _json({**st, "error": st.get("error") or "No se ha podido conectar."}, 400)
+
+
+async def ai_test(request: Request):
+    """Comprueba la conexión con la clave y el modelo actuales (al abrir el programa)."""
+    return _json(await asyncio.to_thread(ai_client.test_connection))
 
 
 async def ai_cut(request: Request):
@@ -320,6 +331,7 @@ routes = [
     Route("/", index),
     Route("/api/ai/status", ai_status),
     Route("/api/ai/key", ai_key, methods=["POST"]),
+    Route("/api/ai/test", ai_test, methods=["POST"]),
     Route("/api/ai/cut", ai_cut, methods=["POST"]),
     Route("/api/cut_views.png", cut_views),
     Route("/api/upload", upload, methods=["POST"]),

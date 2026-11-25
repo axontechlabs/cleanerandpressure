@@ -136,6 +136,8 @@ indica y no lo presenta como válido. *Archivo original intacto* descarga la cop
   pestaña medial = altura del arco + 6 mm, pared lateral 10 mm, antepié 6 mm, dedos 4 mm.
 - El informe muestra la **cobertura** por zonas (talón, mediopié, antepié, dedos), la altura de
   pared alcanzada y los reajustes automáticos que se han hecho.
+- **Al abrir el programa** se conecta con Claude: si no hay clave guardada o no funciona, una ventana
+  la pide, la comprueba y la guarda en este ordenador. Modelo por defecto: Claude Sonnet 5.5.
 - **La IA forma parte del proceso.** *▶ Procesamiento automático completo* (un pie) y *Procesar ambos
   escaneos* (bilateral) cortan, y Claude revisa el corte y reajusta los parámetros hasta darlo por
   bueno (6 rondas como máximo) antes de suavizar y crear el sólido. *Simular* hace lo mismo con el

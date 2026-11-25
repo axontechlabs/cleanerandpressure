@@ -65,9 +65,13 @@ ignoran). Si un cambio empeora claramente la cobertura medida, se deshace.
 
 La revisión por IA **forma parte del proceso por defecto**: no hay que pulsar nada aparte.
 
-- **Interfaz de un pie**: configure la clave una vez (sección *Revisión por IA* → pegue la clave →
-  *Usar esta clave*; marque *Guardar en este ordenador* para que se recuerde) y pulse
-  *▶ Procesamiento automático completo*. El programa corta, la IA revisa y reajusta hasta darlo por
+- **Al abrir el programa** (cualquiera de las dos páginas) se comprueba la conexión con Claude. Si no
+  hay clave, o no funciona, aparece una ventana que la pide: pegue la clave, deje el modelo
+  *Claude Sonnet 5.5* (por defecto) y pulse *Conectar*. Se hace una llamada mínima a la API para
+  comprobar clave, créditos y modelo, y la clave queda guardada en `.env` de este ordenador: las
+  siguientes veces se conecta sola. Arriba se ve el estado (*IA conectada · Claude Sonnet 5.5*);
+  pulsándolo, o con *Cambiar clave o modelo*, se cambia la clave o el modelo.
+- **Interfaz de un pie**: pulse *▶ Procesamiento automático completo*. El programa corta, la IA revisa y reajusta hasta darlo por
   bueno (*Rondas máx.*, 6 por defecto) y después se suaviza, se crea el sólido y se valida.
 - **Interfaz bilateral**: *Procesar ambos escaneos* hace lo mismo con cada pie; *Simular* revisa y
   reajusta además el mapa de presión. Los botones *Repetir la revisión…* vuelven a pasarla.
