@@ -5,3 +5,5 @@ starlette>=0.37,<2
 uvicorn>=0.29,<1
 # Mapas de presión en PNG del modo bilateral (licencia PSF/BSD).
 matplotlib>=3.7,<4
+# Certificados raíz para HTTPS con la API de Claude (el Python de python.org en macOS no trae los del sistema).
+certifi>=2024.2.2
