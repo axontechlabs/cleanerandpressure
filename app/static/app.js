@@ -1,5 +1,4 @@
 import { Viewer, V3 } from './viewer.js';
-import * as aiGate from './ai_gate.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -544,9 +543,7 @@ function bindUI() {
   $$('[data-op]').forEach((b) => { b.onclick = () => OPS[b.dataset.op](); });
   $('#op-auto').onclick = autoAll;
   $('#ai-cut').onclick = aiCut;
-  $('#ai-config').onclick = () => aiGate.open();
-  $('#ai-off').addEventListener('change', () => aiGate.refresh());
-  aiGate.initAiGate();
+  // la conexión con la IA la gestiona /static/ai_gate.js (independiente de este archivo)
   $$('.tool').forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
   $('#brush').oninput = (e) => { $('#brush-out').textContent = e.target.value + ' mm'; };
   $('#undo').onclick = () => { const e = S.undo.pop(); if (e) { S.redo.push(e); applyEdit(e, 'old'); } };

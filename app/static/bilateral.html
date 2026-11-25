@@ -8,9 +8,47 @@
 <link rel="stylesheet" href="/static/bilateral.css">
 </head>
 <body>
+<!-- Conexión con Claude (IA): se muestra siempre al abrir el programa (app/static/ai_gate.js) -->
+<style>
+  #ai-gate { position: fixed; inset: 0; background: rgba(5,8,12,.78); display: flex; align-items: center; justify-content: center; z-index: 10000; }
+  #ai-gate .card { width: min(480px, 92vw); background: #1d2128; color: #e6e9ee; border: 1px solid #343b47; border-radius: 10px; padding: 18px 20px; box-shadow: 0 10px 40px rgba(0,0,0,.5); font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+  #ai-gate h3 { margin: 0 0 6px; font-size: 17px; }
+  #ai-gate p { color: #98a2b3; margin: 6px 0 10px; font-size: 12.5px; }
+  #ai-gate label { display: block; margin: 10px 0 4px; font-size: 12px; color: #98a2b3; }
+  #ai-gate input[type=password], #ai-gate select { width: 100%; box-sizing: border-box; padding: 8px; background: #252a33; color: #e6e9ee; border: 1px solid #343b47; border-radius: 6px; font: inherit; }
+  #ai-gate .chk { display: flex; gap: 6px; align-items: center; color: #e6e9ee; }
+  #ai-gate .okmsg { color: #3fb26b; } #ai-gate .warnmsg { color: #e3b341; }
+  #ai-gate-err { color: #f0635a; font-size: 12px; min-height: 1.2em; margin-top: 10px; white-space: pre-wrap; }
+  #ai-gate .row2 { display: flex; gap: 8px; justify-content: space-between; margin-top: 14px; }
+  #ai-gate button { border-radius: 6px; padding: 8px 12px; font: inherit; cursor: pointer; border: 1px solid #343b47; background: #252a33; color: #e6e9ee; }
+  #ai-gate #ai-gate-ok { background: #3d8bfd; border-color: #3d8bfd; color: #fff; font-weight: 600; }
+  #ai-badge { padding: 3px 10px; border-radius: 10px; background: #252a33; color: #98a2b3; cursor: pointer; border: 1px solid #343b47; font: inherit; font-size: 12px; white-space: nowrap; }
+  #ai-badge.ok { color: #08130c; background: #3fb26b; border-color: #3fb26b; }
+  #ai-badge.warn { color: #1a1403; background: #e3b341; border-color: #e3b341; }
+</style>
+<div id="ai-gate">
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="ai-gate-title">
+    <h3 id="ai-gate-title">Conectar con Claude (IA)</h3>
+    <p>La IA revisa y reajusta el corte de cada pie y el mapa de presión dentro del proceso. Pegue la clave de la API
+      (Claude Console → API keys; empieza por <code>sk-ant-</code>).</p>
+    <div id="ai-gate-info" class="warnmsg">Comprobando la conexión…</div>
+    <label for="ai-gate-key">Clave de la API</label>
+    <input type="password" id="ai-gate-key" placeholder="sk-ant-…" autocomplete="off">
+    <label for="ai-gate-model">Modelo</label>
+    <select id="ai-gate-model"><option value="claude-sonnet-5-5">Claude Sonnet 5.5 (recomendado)</option></select>
+    <label class="chk"><input type="checkbox" id="ai-gate-persist" checked> Guardar en este ordenador (archivo .env, no se sube a GitHub)</label>
+    <div id="ai-gate-err"></div>
+    <div class="row2">
+      <button type="button" id="ai-gate-skip">Continuar sin IA (solo pruebas)</button>
+      <button type="button" id="ai-gate-ok">Conectar</button>
+    </div>
+  </div>
+</div>
+<script src="/static/ai_gate.js"></script>
 <header>
   <h1>Simulación bilateral · bipedestación estática</h1>
   <a class="btn" href="/">← Limpieza de un pie</a>
+  <button type="button" id="ai-badge" class="warn">IA sin conectar · pulse aquí</button>
   <span id="status" class="idle">Cargue los escaneos de los dos pies</span>
 </header>
 

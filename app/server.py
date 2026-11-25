@@ -282,11 +282,14 @@ async def ai_key(request: Request):
     """Fija la clave/modelo (por defecto se guarda en .env) y comprueba la conexión con una llamada mínima."""
     try:
         body = await _body_json(request)
-        ai_client.set_api_key(body.get("key"), body.get("model"), bool(body.get("persist", True)))
+        ai_client.set_api_key(body.get("key"), body.get("model"), False)
     except (PipelineError, AIError) as e:
         return _json({"error": str(e)}, 400)
     st = await asyncio.to_thread(ai_client.test_connection)
     if st["connected"]:
+        if body.get("persist", True):       # solo se guarda una clave que funciona
+            ai_client.set_api_key(body.get("key"), body.get("model"), True)
+            st = ai_client.status()
         return _json(st)
     return _json({**st, "error": st.get("error") or "No se ha podido conectar."}, 400)
 

@@ -1,4 +1,3 @@
-import * as aiGate from './ai_gate.js';
 // Modo bilateral: dos escaneos, dos limpiezas independientes y una simulación conjunta.
 import { Viewer } from './viewer.js';
 
@@ -388,7 +387,6 @@ function wire() {
     status(`Equilibrio: ${fmt(g.feet_force_N, 1)} N = m·g · reparto ${fmt(g.split_left_pct)} / ${fmt(g.split_right_pct)} % · máx. ${fmt(g.peak_kPa, 0)} kPa`,
       (d.report.warnings || []).length ? 'warn' : 'ok');
   });
-  $('#ai-config').onclick = () => aiGate.open();
   $('#ai-cut').onclick = () => busy('La IA está revisando el corte de los dos pies (unos minutos)', async () => {
     const d = await api('/api/bi/ai/cut', { rounds: num('#ai-rounds') || 6 }); S.state = d.state; S.report = null; S.placement = null;
     renderProcessing(); renderReport(); showMap();
@@ -406,8 +404,7 @@ function wire() {
     const h = d.report.ia.history, last = h[h.length - 1] || {};
     status(`IA (${h.length} ronda/s): ${last.diagnosis || ''}`, last.verdict === 'correcto' ? 'ok' : 'warn');
   });
-  $('#ai-off').addEventListener('change', () => aiGate.refresh());
-  aiGate.initAiGate();
+  // la conexión con la IA la gestiona /static/ai_gate.js (independiente de este archivo)
   $('#split').addEventListener('input', updateSplit);
   $('#mode').addEventListener('change', () => {
     const com = $('#mode').value === 'centro_masas';
