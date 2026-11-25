@@ -6,3 +6,6 @@ workspace/
 resultados/
 salida/
 salida_bilateral/
+
+# Clave de la API de Claude (nunca se sube)
+.env

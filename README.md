@@ -5,6 +5,12 @@ aísla la planta del pie, elimina la geometría que no le pertenece (aunque est�
 superpuesta), genera un contorno limpio, suaviza de forma adaptativa sin aplanar el arco y
 construye una malla estanca validada, lista para CAD o fabricación.
 
+Por defecto el corte es de **plantilla**: talón completo, arco, antepié y los cinco dedos, más la
+copa del talón, la pestaña medial bajo el arco y algo de pared lateral, hasta una línea de recorte
+por altura sobre el suelo. El programa mide qué parte de cada zona ha conservado y, si falta algo,
+reajusta los parámetros y vuelve a cortar. Opcionalmente, **Claude (IA)** revisa el corte y el mapa
+de presión, propone parámetros y se repite el cálculo (ver [docs/IA.md](docs/IA.md)).
+
 Incluye además un **modo bilateral**: limpia los escaneos de los dos pies de una persona por separado
 y simula la bipedestación estática sobre ambos a la vez, con un mapa de presión plantar bilateral al
 estilo de la baropodometría (ver [docs/BILATERAL.md](docs/BILATERAL.md)).
@@ -73,7 +79,7 @@ docker run --rm -p 8000:8000 -v "$PWD/workspace:/app/workspace" cleanerandpressu
    | Botón | Qué hace |
    |---|---|
    | 1. Analizar STL | Vértices, caras, dimensiones, componentes, bordes abiertos, caras degeneradas y duplicadas, errores manifold, normales incoherentes, autointersecciones, capas superpuestas y densidad de polígonos. |
-   | 2. Segmentar superficie plantar | Clasifica cada cara: **conservar** (verde), **dudosa** (amarillo) o **eliminar** (marrón). |
+   | 2. Segmentar superficie plantar | Clasifica cada cara: **conservar** (verde), **dudosa** (amarillo) o **eliminar** (marrón). En modo plantilla añade las paredes (copa del talón, pestañas) hasta la línea de recorte. |
    | 3. Eliminar geometría no deseada | Extrae la planta según la segmentación (y sus correcciones manuales). |
    | 4. Recortar y generar contorno | Aplica los planos de corte confirmados, rellena agujeros, regulariza el contorno y remalla con densidad uniforme. |
    | 5. Suavizar | Suavizado adaptativo multiescala: analiza la textura del escaneo y deja la superficie lisa conservando el relieve real. |
@@ -123,6 +129,26 @@ Elija etapa, formato y orientación (*la del escaneo* o *base apoyada en Z=0*). 
 solo se exporta si ha superado todas las comprobaciones**; en caso contrario la aplicación lo
 indica y no lo presenta como válido. *Archivo original intacto* descarga la copia sin modificar.
 
+## Corte de plantilla y revisión por IA
+
+- **Tipo de corte** (Parámetros → Segmentación y corte de plantilla): `plantilla` (por defecto) o
+  `planta` (solo la planta, como antes). Alturas de la línea de recorte: copa del talón 15 mm,
+  pestaña medial = altura del arco + 6 mm, pared lateral 10 mm, antepié 6 mm, dedos 4 mm.
+- El informe muestra la **cobertura** por zonas (talón, mediopié, antepié, dedos), la altura de
+  pared alcanzada y los reajustes automáticos que se han hecho.
+- **🤖 Revisar y reajustar el corte con IA** (sección *Revisión por IA*): Claude mira el corte,
+  propone cambios de parámetros y se vuelve a cortar, hasta que lo da por bueno (3 rondas por
+  defecto). En el modo bilateral hay además **Revisar y reajustar el mapa de presión**.
+- Necesita una clave de la API de Claude con créditos: se compran en la Claude Console
+  (`platform.claude.com` → *Settings → Billing → Buy credits*; la clave, en *API keys*). Detalles,
+  coste aproximado y cómo guardar la clave sin subirla a GitHub: [docs/IA.md](docs/IA.md).
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # o en el archivo .env (no se sube a GitHub)
+.venv/bin/python cli.py escaneo.stl -o plantilla.stl --ia 3 --vistas vistas.png
+.venv/bin/python cli_bilateral.py izq.stl der.stl --peso 70 --ia-corte 2 --ia-presion 3 -o salida/
+```
+
 ## Modo bilateral (dos pies)
 
 Botón **Modo bilateral (dos pies) →** en la cabecera, o directamente `http://127.0.0.1:8000/bilateral`.
@@ -145,7 +171,10 @@ Botón **Modo bilateral (dos pies) →** en la cabecera, o directamente `http://
      del pie; puede escribir la caída del navicular medida). La banda lateral del mediopié une el
      talón con el antepié, como en una huella estática normal;
    - asienta cada uno de los cinco dedos en su articulación metatarsofalángica hasta que apoya y lo
-     aprieta contra el suelo con el momento flexor: los dedos aparecen en el mapa con carga ligera.
+     aprieta contra el suelo con el momento flexor: los dedos aparecen en el mapa con carga ligera;
+   - da a cada dedo la sección redondeada y la falange proximal algo levantada que los escaneos
+     (dedos juntos, calcetín) no muestran, con un pulpejo blando y poco reparto lateral: cada dedo
+     aparece como una mancha separada, como en una plataforma de presión, y no como una franja.
 6. Exportación: dos STL limpios, tres PNG, CSV de presiones y JSON de resultados.
 
 Sin interfaz:
@@ -219,6 +248,10 @@ core/                   núcleo geométrico (NumPy/SciPy)
   orientation.py        marco plantar
   raster.py             rasterización / z-buffer
   segmentation.py       etapa 2: extracción plantar
+  insole.py             corte de plantilla: suelo, marco anatómico, línea de recorte, paredes y cobertura
+  ai_client.py          cliente de la API de Claude (solo biblioteca estándar)
+  ai_views.py           vistas de diagnóstico del corte (PNG) que analiza la IA
+  ai_tuner.py           bucles de revisión por IA del corte y del mapa de presión
   mesh_cutting.py       etapa 3a: corte exacto por plano
   surface_remesh.py     etapa 3b: contorno, agujeros y remallado
   smoothing.py          etapa 4: suavizado adaptativo
@@ -230,10 +263,10 @@ core/                   núcleo geométrico (NumPy/SciPy)
   bilateral_session.py  modo bilateral: dos limpiezas independientes + simulación conjunta
   pressure_maps.py      mapas de presión en PNG
   synthetic.py          escaneos sintéticos con verdad-terreno
-tests/test_processing.py, tests/test_bilateral.py
+tests/test_processing.py, tests/test_bilateral.py, tests/test_insole_ai.py
 scripts/                generación de ejemplos, tabla de escenarios y comparativa de suavizado
 samples/                dos escaneos sintéticos de ejemplo
-docs/                   investigación técnica y parámetros
+docs/                   investigación técnica, parámetros, modo bilateral, plantilla e IA
 cli.py                  uso sin interfaz (un pie)
 cli_bilateral.py        uso sin interfaz (dos pies)
 run.sh, install.sh, Dockerfile, .devcontainer/, .github/workflows/
@@ -246,11 +279,13 @@ run.sh, install.sh, Dockerfile, .devcontainer/, .github/workflows/
 .venv/bin/python -m pytest
 ```
 
-55 pruebas (unos cinco minutos): 33 del procesamiento de un pie y 22 del modo bilateral
-(descritas en [docs/BILATERAL.md](docs/BILATERAL.md)). Los escenarios sintéticos tienen una planta analítica
+64 pruebas (unos siete minutos): 33 del procesamiento de un pie, 22 del modo bilateral
+(descritas en [docs/BILATERAL.md](docs/BILATERAL.md)) y 9 del corte de plantilla, los dedos en el
+mapa de presión y la revisión por IA (esta, sin red: con respuestas simuladas de la API). Los escenarios sintéticos tienen una planta analítica
 conocida (arco de 16 mm, almohadillas de los dedos, surco metatarsal) con paredes laterales
 conectadas, orientación y posición aleatorias, y defectos controlados. Resultados con ~50 000 caras
-por modelo y los parámetros por defecto (`python scripts/report_scenarios.py`):
+por modelo en modo `planta` (la fidelidad frente a la planta analítica se mide sin las paredes de
+la plantilla; `python scripts/report_scenarios.py`):
 
 | Escenario | Caras | Eliminado (área) | Error RMS vs. analítico | P99,5 | Desv. media / P95 vs. escaneo | Planta preservada | Δ arco | Sólido válido |
 |---|---:|---:|---:|---:|---:|---:|---:|:---:|

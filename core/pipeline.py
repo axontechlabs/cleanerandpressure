@@ -27,6 +27,51 @@ from .orientation import Frame, estimate_frame
 from .segmentation import SegmentationParams, extract, segment_plantar
 from .smoothing import SmoothParams, smooth_surface
 from .surface_remesh import ContourParams, remesh_heightfield
+from .insole import coverage_report
+
+# Reajuste automático del corte de plantilla: límites de cada parámetro.
+TUNE_LIMITS = {
+    "max_angle": (40.0, 78.0), "gap_tol": (2.0, 20.0), "join_dz": (2.0, 16.0), "bridge_gap": (0.0, 12.0),
+    "min_island_area": (5.0, 200.0), "crease_angle": (45.0, 115.0), "layer_tol": (0.5, 3.0),
+    "seed_angle": (15.0, 50.0), "normal_radius": (1.0, 8.0),
+    "heel_cup": (0.0, 35.0), "medial_flange": (0.0, 45.0), "lateral_flange": (0.0, 30.0),
+    "forefoot_wall": (0.0, 20.0), "toe_wall": (0.0, 15.0), "wall_min": (0.0, 8.0),
+    "wall_max_angle": (60.0, 87.0), "wall_max_reach": (5.0, 50.0),
+}
+
+
+def clamp_segment_params(d: dict) -> dict:
+    out = {}
+    for k, v in (d or {}).items():
+        if k == "mode":
+            if v in ("plantilla", "planta"):
+                out[k] = v
+            continue
+        if k in TUNE_LIMITS:
+            try:
+                out[k] = float(np.clip(float(v), *TUNE_LIMITS[k]))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def adjust_for_coverage(seg: dict, cov: dict) -> dict:
+    """Regla determinista: qué tocar según lo que falta en el corte (sin IA)."""
+    p = SegmentationParams.from_dict(seg)
+    new = dict(seg)
+    z = cov.get("zones", {})
+    if z.get("dedos", {}).get("coverage", 1) < 0.9 or cov.get("toe_missing_mm", 0) > 6:
+        new.update(gap_tol=p.gap_tol * 1.7, join_dz=p.join_dz + 4, max_angle=p.max_angle + 5,
+                   min_island_area=p.min_island_area * 0.6, bridge_gap=p.bridge_gap + 3)
+    if any(z.get(k, {}).get("coverage", 1) < 0.9 for k in ("talon", "mediopie", "antepie")) \
+            or cov.get("heel_missing_mm", 0) > 6:
+        new.update(max_angle=max(new.get("max_angle", p.max_angle), p.max_angle + 6),
+                   crease_angle=p.crease_angle + 8, layer_tol=p.layer_tol * 1.3)
+    if any(w.get("ratio", 1) < 0.7 for w in cov.get("walls", {}).values()):
+        new.update(wall_max_angle=p.wall_max_angle + 4, wall_max_reach=p.wall_max_reach + 10)
+    if cov.get("extra_fraction", 0) > 0.03:
+        new.update(crease_angle=min(new.get("crease_angle", p.crease_angle), p.crease_angle - 12))
+    return {**seg, **clamp_segment_params(new)}
 
 STAGES = ("original", "segmentado", "recortado", "suavizado", "solido")
 
@@ -50,6 +95,8 @@ class Pipeline:
         self.work_c: Mesh | None = None          # malla limpia en el marco canónico
         self.frame: Frame | None = None
         self.labels: np.ndarray | None = None
+        self.reason: np.ndarray | None = None
+        self.tuning: list[dict] = []
         self.manual: np.ndarray | None = None
         self.stages: dict[str, Mesh] = {}        # mallas en el marco canónico
         self.reports: dict[str, dict] = {}
@@ -156,6 +203,8 @@ class Pipeline:
         except ValueError as e:
             raise PipelineError(str(e)) from e
         self.labels = res["labels"]
+        self.reason = res["reason"]
+        self._seg_params = SegmentationParams.from_dict(params)
         info = res["info"]
         info["warnings"] = self.frame.info.get("warnings", []) + info["warnings"]
         info["seconds"] = round(time.time() - t0, 3)
@@ -226,6 +275,15 @@ class Pipeline:
         except ValueError as e:
             raise PipelineError(str(e)) from e
         info = res["info"]
+        ins = (self.reports.get("segmentacion") or {}).get("insole")
+        if ins:
+            try:
+                info["cobertura"] = coverage_report(self.work_c, res["mesh"], ins["frame"], ins["targets"],
+                                                    getattr(self, "_seg_params", None))
+                for prob in info["cobertura"]["problems"]:
+                    info.setdefault("warnings", []).append("Plantilla: " + prob)
+            except Exception as e:          # la medida de cobertura nunca debe impedir el corte
+                info["cobertura"] = {"error": str(e)}
         info["planes"] = len(planes or [])
         info["area_removed_by_planes"] = float(before - m.area)
         info["seconds"] = round(time.time() - t0, 3)
@@ -315,14 +373,61 @@ class Pipeline:
         out = {}
         if "analisis" not in self.reports:
             out["analisis"] = self.analyze()
-        if self.labels is None or params.get("resegment", True):
-            out["segmentacion"] = self.segment(params.get("segment"))
-        out["segmentado"] = self.extract()
-        out["recortado"] = self.cut(params.get("planes"), params.get("cut"))
+        seg = params.get("segment") or {}
+        tune = params.get("autotune", True) and SegmentationParams.from_dict(seg).mode == "plantilla"
+        if tune and (self.labels is None or params.get("resegment", True)):
+            self.autotune_cut(seg, params.get("cut"), params.get("planes"))
+            out["segmentacion"] = self.reports["segmentacion"]
+            out["segmentado"] = self.reports["segmentado"]
+            out["recortado"] = self.reports["recortado"]
+        else:
+            if self.labels is None or params.get("resegment", True):
+                out["segmentacion"] = self.segment(seg)
+            out["segmentado"] = self.extract()
+            out["recortado"] = self.cut(params.get("planes"), params.get("cut"))
         out["suavizado"] = self.smooth(params.get("smooth"))
         out["solido"] = self.solid(params.get("solid"))
         out["validacion"] = self.validate()
         return out
+
+    def run_cut(self, seg: dict | None = None, cut: dict | None = None, planes=None) -> dict:
+        """Segmentar + extraer + recortar con unos parámetros; devuelve la cobertura."""
+        self.segment(seg)
+        self.extract()
+        info = self.cut(planes, cut)
+        return info.get("cobertura") or {}
+
+    def autotune_cut(self, seg: dict | None = None, cut: dict | None = None, planes=None,
+                     max_rounds: int = 3) -> list[dict]:
+        """Corta, mide la cobertura de la plantilla y reajusta los parámetros hasta que esté completa.
+
+        Se queda con el mejor intento. Las correcciones manuales se respetan en todos.
+        """
+        seg = dict(seg or {})
+        hist: list[dict] = []
+        best = None
+        for r in range(max_rounds):
+            cov = self.run_cut(seg, cut, planes)
+            if not cov or "score" not in cov:
+                break
+            hist.append({"round": r + 1, "source": "reglas", "params": dict(seg), "score": cov["score"],
+                         "problems": cov["problems"]})
+            if best is None or cov["score"] > best[0] + 1e-4:
+                best = (cov["score"], dict(seg), r)
+            if cov["ok"]:
+                break
+            new = adjust_for_coverage(seg, cov)
+            if new == seg:
+                break
+            seg = new
+        if best is not None and best[2] != len(hist) - 1:
+            self.run_cut(best[1], cut, planes)
+            hist.append({"round": len(hist) + 1, "source": "reglas", "params": dict(best[1]),
+                         "score": best[0], "problems": [], "note": "se recupera el mejor intento"})
+        self.tuning = hist
+        if hist:
+            self.reports["recortado"]["autotune"] = hist
+        return hist
 
     # ------------------------------------------------------------------ salida
     def has(self, stage: str) -> bool:

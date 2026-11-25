@@ -44,6 +44,19 @@
   </section>
 
   <section>
+    <h2>Revisión por IA (Claude)</h2>
+    <p id="ai-state" class="hint">…</p>
+    <label class="row">Clave API <input type="password" id="ai-key" placeholder="sk-ant-…" autocomplete="off"></label>
+    <label class="row">Modelo <input type="text" id="ai-model" placeholder="claude-sonnet-5-5"></label>
+    <label class="row"><input type="checkbox" id="ai-persist"> Guardar en este ordenador (.env)</label>
+    <div class="row"><button class="btn small" id="ai-save">Usar esta clave</button>
+      <label>Rondas <input type="number" id="ai-rounds" min="1" max="6" value="3" style="width:3.5em"></label></div>
+    <button class="btn wide accent" id="ai-cut" disabled>🤖 Revisar y reajustar el corte con IA</button>
+    <a id="ai-views" href="#" target="_blank" hidden>Ver las vistas que analiza la IA</a>
+    <p class="hint">La IA mira el corte (talón, arco, dedos, paredes), propone parámetros y se vuelve a cortar. Solo elige parámetros dentro de límites; la geometría la calcula siempre el programa.</p>
+  </section>
+
+  <section>
     <h2>Corrección manual de la segmentación</h2>
     <div class="tools" id="tools">
       <button class="btn tool active" data-tool="nav" title="Girar: arrastrar · Desplazar: botón derecho o Mayús · Zoom: rueda">Navegar</button>

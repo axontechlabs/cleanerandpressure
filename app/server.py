@@ -19,6 +19,8 @@ from starlette.staticfiles import StaticFiles
 from core import synthetic
 from core.mesh import build_topology
 from core.mesh_io import stl_bytes
+from core import ai_client
+from core.ai_client import AIError
 from core.pipeline import STAGES, Pipeline, PipelineError
 
 ROOT = Path(__file__).resolve().parent
@@ -69,7 +71,7 @@ async def _run(fn, *args, **kwargs):
             return fn(*args, **kwargs)
     try:
         return await run_in_threadpool(locked), None
-    except PipelineError as e:
+    except (PipelineError, AIError) as e:
         return None, _json({"error": str(e)}, 400)
     except Exception as e:  # noqa: BLE001 - se informa al usuario en la interfaz
         traceback.print_exc()
@@ -264,8 +266,56 @@ async def original(request: Request):
                     headers={"Content-Disposition": f'attachment; filename="{pipe.name}"'})
 
 
+# ------------------------------------------------------------------------- IA
+async def ai_status(request: Request):
+    return _json(ai_client.status())
+
+
+async def ai_key(request: Request):
+    try:
+        body = await _body_json(request)
+        return _json(ai_client.set_api_key(body.get("key"), body.get("model"), bool(body.get("persist"))))
+    except (PipelineError, AIError) as e:
+        return _json({"error": str(e)}, 400)
+
+
+async def ai_cut(request: Request):
+    """Revisión del corte por IA: Claude mira el corte, reajusta parámetros y se vuelve a cortar."""
+    try:
+        body = await _body_json(request)
+    except PipelineError as e:
+        return _json({"error": str(e)}, 400)
+
+    def do():
+        from core.ai_tuner import tune_cut
+        if pipe.work is None:
+            raise PipelineError("Cargue primero un STL.")
+        if "analisis" not in pipe.reports:
+            pipe.analyze()
+        if "recortado" not in pipe.stages:
+            pipe.autotune_cut(body.get("segment"), body.get("cut"), body.get("planes"))
+        client = ai_client.ClaudeClient(model=body.get("model") or None)
+        return tune_cut(pipe, client, rounds=int(body.get("rounds", 3)), planes=body.get("planes"))
+    res, err = await _run(do)
+    return err or _json(_with_state(res))
+
+
+async def cut_views(request: Request):
+    def do():
+        from core.ai_tuner import cut_views_png
+        if "recortado" not in pipe.stages:
+            raise PipelineError("Ejecute primero el recorte en modo plantilla.")
+        return cut_views_png(pipe, title=pipe.name or "")
+    res, err = await _run(do)
+    return err or Response(res, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 routes = [
     Route("/", index),
+    Route("/api/ai/status", ai_status),
+    Route("/api/ai/key", ai_key, methods=["POST"]),
+    Route("/api/ai/cut", ai_cut, methods=["POST"]),
+    Route("/api/cut_views.png", cut_views),
     Route("/api/upload", upload, methods=["POST"]),
     Route("/api/sample/{name}", sample, methods=["POST"]),
     Route("/api/state", state),

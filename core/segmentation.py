@@ -43,6 +43,7 @@ REASONS = {
     13: "fragmento o superficie lejana",
     14: "isla demasiado pequeña",
     15: "oculta tras otra superficie",
+    3: "pared de plantilla (talón, arco, lateral)",
     20: "conservada manualmente",
     21: "eliminada manualmente",
 }
@@ -60,6 +61,16 @@ class SegmentationParams:
     min_island_area: float = 25.0   # mm²: islas menores se descartan
     normal_radius: float = 3.0      # mm: radio aproximado de suavizado de normales
     grid: float = 1.0               # mm: resolución de la rejilla de ocupación
+    # --- corte de plantilla (línea de recorte por altura sobre el suelo)
+    mode: str = "plantilla"         # "plantilla": planta + copa de talón + pestañas; "planta": solo planta
+    heel_cup: float = 15.0          # mm: altura de la copa del talón sobre el suelo
+    medial_flange: float = 0.0      # mm: pestaña medial bajo el arco; 0 = automática (altura del arco + 6)
+    lateral_flange: float = 10.0    # mm: pared lateral del mediopié
+    forefoot_wall: float = 6.0      # mm: borde en el antepié
+    toe_wall: float = 4.0           # mm: borde en los dedos
+    wall_min: float = 2.0           # mm: pared mínima sobre el borde de la planta en todo el contorno
+    wall_max_angle: float = 80.0    # º: pendiente máxima de la pared (más vertical no es representable)
+    wall_max_reach: float = 25.0    # mm: distancia máxima en planta de la pared a la planta
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "SegmentationParams":
@@ -253,6 +264,18 @@ def segment_plantar(mesh: Mesh, params: SegmentationParams | None = None,
         labels[drop] = REMOVE
         reason[drop] = 14
 
+    # --- corte de plantilla: paredes conectadas por debajo de la línea de recorte
+    insole_info = None
+    if p.mode == "plantilla" and (labels > 0).any():
+        from .insole import grow_walls
+        try:
+            gw = grow_walls(mesh, labels > 0, forced_remove, p, grid_res=p.grid, topo=topo)
+            labels[gw["added"]] = KEEP
+            reason[gw["added"]] = 3
+            insole_info = gw["info"]
+        except ValueError as e:
+            warnings.append(f"No se ha podido aplicar el corte de plantilla: {e}")
+
     # --- correcciones manuales: siempre prevalecen
     labels[forced_keep] = KEEP
     reason[forced_keep] = 20
@@ -285,6 +308,7 @@ def segment_plantar(mesh: Mesh, params: SegmentationParams | None = None,
         "removed_area_pct": float(100.0 * (total_area - kept_area) / max(total_area, 1e-300)),
         "seed_islands": int(nisl),
         "reason_counts": counts,
+        "insole": insole_info,
         "warnings": warnings,
     }
     return {"labels": labels, "reason": reason, "info": info}

@@ -28,6 +28,24 @@ En la interfaz aparecen en el panel **Parámetros**; en la línea de comandos se
 | `normal_radius` | 3 mm | Escala de suavizado de las normales antes de medir pendientes. | Súbalo con mucho ruido; bájelo para respetar detalle fino en el borde. |
 | `grid` | 1 mm | Resolución de la rejilla de ocupación y visibilidad (solo por configuración). | Rara vez. |
 
+### Corte de plantilla (también en `segment`)
+
+| Parámetro | Por defecto | Efecto | Cuándo cambiarlo |
+|---|---:|---|---|
+| `mode` | `plantilla` | `plantilla`: planta + copa del talón + pestañas hasta la línea de recorte. `planta`: solo la planta (por pendiente). | `planta` si solo quiere la superficie de apoyo. |
+| `heel_cup` | 15 mm | Altura de la copa del talón sobre el suelo. | 10 mm o menos = copa baja; 20–25 mm = copa profunda. |
+| `medial_flange` | 0 (auto) | Pestaña medial bajo el arco. `0` = altura del arco medida + 6 mm. | Fíjela si quiere una pestaña concreta. |
+| `lateral_flange` | 10 mm | Pared lateral del mediopié. | |
+| `forefoot_wall` | 6 mm | Borde del antepié. | |
+| `toe_wall` | 4 mm | Borde de los dedos. | |
+| `wall_min` | 2 mm | Pared mínima por encima del borde de la planta en todo el contorno. | |
+| `wall_max_angle` | 80° | Pendiente máxima de pared (más vertical no es representable como campo de alturas). | Súbalo (≤ 87°) si la pared queda corta en un talón muy vertical. |
+| `wall_max_reach` | 25 mm | Distancia máxima en planta de la pared a la planta. | |
+
+En el procesamiento automático, si la cobertura de alguna zona queda por debajo del 90 % o faltan
+más de 6 mm por la punta o por el talón, los parámetros se reajustan y se vuelve a cortar (hasta
+3 intentos; `"autotune": false` lo desactiva).
+
 ## Contorno y remallado (`cut`)
 
 | Parámetro | Por defecto | Efecto | Cuándo cambiarlo |
