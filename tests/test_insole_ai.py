@@ -46,15 +46,21 @@ def test_insole_cut_has_heel_arch_toes_and_walls(insole):
     frame = frame_view(ins["frame"])
     h = frame.height(pipe.stages["suavizado"].vertices)
     assert h.max() < 40
+    # pared lisa: el borde de la plantilla (línea de recorte) no tiene dientes
+    from core.mesh import boundary_loops
+    lp = max(boundary_loops(pipe.stages["suavizado"]), key=len)
+    hb = frame.height(pipe.stages["suavizado"].vertices[lp])
+    d2 = hb - 0.5 * (np.roll(hb, 1) + np.roll(hb, -1))
+    assert np.abs(d2).max() < 0.3
 
 
 def test_planta_mode_keeps_only_the_sole(insole):
-    sc, _, out = insole
+    sc, pipe, out = insole
     p = Pipeline()
     p.load(stl_bytes(sc.mesh), "limpio.stl")
     o = p.auto({"segment": {"mode": "planta"}})
     assert o["segmentacion"]["insole"] is None
-    assert o["recortado"]["footprint_area"] < out["recortado"]["footprint_area"]
+    assert p.stages["recortado"].area < pipe.stages["recortado"].area - 1000      # sin paredes
 
 
 def test_insole_walls_do_not_grab_connected_brim():

@@ -5,7 +5,9 @@ import asyncio
 import base64
 import json
 import math
+import re
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -85,8 +87,19 @@ def _with_state(report):
 
 
 # ------------------------------------------------------------------------- rutas
+BUILD = str(int(time.time()))
+
+
+def html_page(path: Path) -> Response:
+    """Página con los /static/… versionados: el navegador nunca mezcla HTML nuevo con JavaScript viejo."""
+    html = path.read_text(encoding="utf-8")
+    for ext in (".js", ".css"):
+        html = re.sub(r'(/static/[\w./-]+\%s)(["\'])' % ext, r"\1?v=" + BUILD + r"\2", html)
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
 async def index(request: Request):
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+    return html_page(STATIC / "index.html")
 
 
 async def upload(request: Request):

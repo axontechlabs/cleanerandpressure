@@ -85,6 +85,12 @@ async function bin(path) {
 }
 function b64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
 
+// Dónde ha fallado (archivo:línea), para poder diagnosticar cualquier error que llegue al usuario.
+function errWhere(e) {
+  const m = String((e && e.stack) || '').match(/\/static\/([\w.-]+\.js)(?:\?[^:]*)?:(\d+)/);
+  return m ? ` [${m[1]}:${m[2]}]` : '';
+}
+
 async function run(label, fn) {
   if (S.busy) return;
   S.busy = true; setStatus(label + '…', 'busy'); updateButtons();
@@ -92,7 +98,7 @@ async function run(label, fn) {
     const msg = await fn();
     if (msg !== false) setStatus(typeof msg === 'string' ? msg : label + ': hecho', (msg && msg.cls) || 'ok');
     if (msg && msg.text) setStatus(msg.text, msg.cls);
-  } catch (e) { console.error(e); setStatus(e.message, 'err'); }
+  } catch (e) { console.error(e); setStatus(e.message + errWhere(e), 'err'); }
   S.busy = false; updateButtons(); renderReport();
 }
 

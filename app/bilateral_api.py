@@ -39,7 +39,8 @@ def make_routes(static_dir, workspace, json_response, body_json):
         return {"report": rep, "state": session.state()}
 
     async def page(request: Request):
-        return FileResponse(static_dir / "bilateral.html", headers={"Cache-Control": "no-store"})
+        from app.server import html_page
+        return html_page(static_dir / "bilateral.html")
 
     async def upload(request: Request):
         side = request.path_params["side"]

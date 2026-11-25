@@ -38,8 +38,12 @@ El modo `plantilla` (ahora el predeterminado; `planta` conserva el comportamient
    cortar** (hasta 3 intentos; se queda el mejor). Ejemplo: si faltan dedos se amplían la distancia
    y el salto de altura de las islas y el ángulo máximo; si falta pared, la pendiente admitida.
 
-El resultado sigue siendo un campo de alturas (2,5D): no admite voladizos, por eso la pared se
-limita a 80° y a lo visible desde el suelo. Para la simulación de presión las paredes no cuentan
+La planta se remalla como campo de alturas (2,5D), que la representa muy bien; la **pared se
+construye aparte**, como una franja de columnas a lo largo del borde de la planta: cada columna
+sube siguiendo la pared del escaneo (cortes horizontales cada 0,5 mm) hasta la línea de recorte, y
+los desplazamientos se suavizan a lo largo del borde. Así la pared no tiene escalones y el borde de
+la plantilla queda limpio (un campo de alturas en rejilla daba escalones y dientes de sierra en las
+paredes casi verticales). La pared nunca forma voladizos vista desde el suelo. Para la simulación de presión las paredes no cuentan
 (solo las caras a menos de 65° del eje plantar), porque no tocan el suelo.
 
 ## 2. Revisión por IA (Claude)

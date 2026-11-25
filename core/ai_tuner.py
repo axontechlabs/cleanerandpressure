@@ -65,7 +65,8 @@ capas duplicadas) ni perder anatomía real. Es preferible conservar una zona dud
 
 Recibes una imagen con 4 paneles (marco anatómico: talón abajo, dedos arriba; medial a la derecha):
 1) el escaneo visto desde el suelo en gris y lo conservado en color (verde planta, azul pared, amarillo dudoso);
-2) la superficie resultante coloreada por altura sobre el suelo, con el contorno y las zonas;
+2) la superficie resultante coloreada por altura sobre el suelo, con relieve sombreado (deja ver escalones, ondas, \
+bultos o dientes en la superficie y en el borde), el contorno y las zonas;
 3) perfil de altura frente a longitud: gris = escaneo, rojo = borde medial del resultado, azul = borde lateral; \
 las líneas discontinuas son la línea de recorte objetivo;
 4) cortes transversales en talón, arco, antepié y dedos (gris = escaneo, color = resultado).
@@ -74,7 +75,8 @@ milímetros que faltan por la punta o el talón, altura de pared alcanzada) y lo
 
 Sé exigente: este corte se usa directamente para fabricar la plantilla, sin revisión humana. Responde "correcto" \
 solo si no queda nada que mejorar (talón entero, arco, los cinco dedos, paredes a la altura objetivo, contorno \
-limpio, nada ajeno). Si no, propone cambios CONCRETOS de parámetros (solo los de la lista, dentro de sus límites, \
+limpio y suave, superficie lisa sin escalones ni bultos, nada ajeno). Para una superficie áspera u ondulada, el \
+suavizado se ajusta aparte; tú decides el corte. Si no, propone cambios CONCRETOS de parámetros (solo los de la lista, dentro de sus límites, \
 pocos cada vez y razonados por lo que ves). No cambies lo que ya está bien.
 
 Responde SOLO con un objeto JSON, sin texto adicional:
